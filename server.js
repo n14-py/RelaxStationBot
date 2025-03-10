@@ -4,9 +4,6 @@ const http = require('http');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Eliminar línea de archivos estáticos
-// app.use(express.static('public')); <-- Eliminado
-
 // Ruta principal
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
@@ -23,14 +20,14 @@ app.get('/health', (req, res) => {
 
 // Iniciar servidor
 const server = app.listen(port, () => {
-  console.log(`Servidor web activo en puerto ${port}`);
+  console.log(`✅ Servidor web activo en puerto ${port}`);
   
   // Sistema de ping automático
   setInterval(() => {
     http.get(`http://localhost:${port}/health`, (res) => {
-      console.log(`Ping exitoso - ${new Date().toLocaleTimeString()}`);
+      console.log(`🔄 Ping exitoso - ${new Date().toLocaleTimeString()}`);
     }).on('error', (err) => {
-      console.error('Error en ping:', err.message);
+      console.error('❌ Error en ping:', err.message);
     });
-  }, 300000);
+  }, 300000); // 5 minutos
 });
