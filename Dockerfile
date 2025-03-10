@@ -1,14 +1,20 @@
-FROM python:3.9
+# Usa una imagen base de Node.js
+FROM node:16
 
 # Instalar FFmpeg
 RUN apt-get update && apt-get install -y ffmpeg
 
-# Copiar archivos al contenedor
+# Establecer el directorio de trabajo dentro del contenedor
 WORKDIR /app
+
+# Copiar los archivos del proyecto al contenedor
 COPY . /app
 
-# Instalar dependencias
-RUN pip install -r requirements.txt
+# Instalar las dependencias de Node.js
+RUN npm install
 
-# Ejecutar el script
-CMD ["python", "main.py"]
+# Exponer el puerto que usará la aplicación (por ejemplo, el 3000)
+EXPOSE 3000
+
+# Comando para ejecutar la aplicación
+CMD ["npm", "start"]
