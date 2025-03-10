@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y ffmpeg
 WORKDIR /app
 
 # Copiar archivos necesarios para instalar dependencias primero
-COPY package.json package-lock.json /app/
+COPY package.json package.json /app/
 
 # Instalar dependencias
 RUN npm install
