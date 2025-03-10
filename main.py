@@ -1,34 +1,45 @@
 import os
 import random
 import subprocess
+import logging
+import time
 
 # Configuración
-VIDEOS_DIR = "videos"
-MUSIC_DIR = "musica_jazz"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 RTMP_URL = "rtmp://a.rtmp.youtube.com/live2/tumy-gch3-dx73-cg5r-20dy"
+VIDEO_DIR = "videos"
+AUDIO_DIR = "musica_jazz"
 
-# Verificar y cargar medios
 def load_media():
-    videos = [os.path.join(VIDEOS_DIR, f) for f in os.listdir(VIDEOS_DIR) if f.endswith(".mp4")]
-    music = [os.path.join(MUSIC_DIR, f) for f in os.listdir(MUSIC_DIR) if f.endswith(".mp3")]
+    """Cargar archivos multimedia válidos"""
+    videos = []
+    audios = []
+    
+    for root, _, files in os.walk(VIDEO_DIR):
+        for file in files:
+            if file.endswith((".mp4", ".mkv", ".mov")):
+                videos.append(os.path.join(root, file))
+    
+    for root, _, files in os.walk(AUDIO_DIR):
+        for file in files:
+            if file.endswith((".mp3", ".wav", ".aac")):
+                audios.append(os.path.join(root, file))
     
     if not videos:
-        raise FileNotFoundError(f"No se encontraron videos en {VIDEOS_DIR}")
-    if not music:
-        raise FileNotFoundError(f"No se encontró música en {MUSIC_DIR}")
+        raise FileNotFoundError(f"No videos found in {VIDEO_DIR}")
+    if not audios:
+        raise FileNotFoundError(f"No audio files found in {AUDIO_DIR}")
     
-    return videos, music
+    return videos, audios
 
-def main():
-    videos, music = load_media()
-    
-    # Selección aleatoria
-    video_path = random.choice(videos)
-    audio_path = random.choice(music)
-    
-    # Configuración FFmpeg
-    command = [
+def create_stream_command(video_path, audio_path):
+    """Generar comando FFmpeg optimizado"""
+    return [
         "ffmpeg",
+        "-loglevel", "info",
         "-re",
         "-stream_loop", "-1",
         "-i", video_path,
@@ -40,7 +51,7 @@ def main():
         "-preset", "veryfast",
         "-b:v", "2500k",
         "-maxrate", "3000k",
-        "-bufsize", "6000k",
+        "-bufsize", "5000k",
         "-pix_fmt", "yuv420p",
         "-g", "50",
         "-r", "30",
@@ -50,30 +61,41 @@ def main():
         "-f", "flv",
         RTMP_URL
     ]
+
+def main():
+    videos, audios = load_media()
     
-    # Ejecutar transmisión
-    try:
-        print("Iniciando transmisión con:")
-        print("Video:", video_path)
-        print("Audio:", audio_path)
-        print("Comando FFmpeg:", " ".join(command))
-        
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True
-        )
-        
-        # Mostrar logs en tiempo real
-        for line in process.stdout:
-            print(line.strip())
+    while True:
+        try:
+            video = random.choice(videos)
+            audio = random.choice(audios)
             
-    except Exception as e:
-        print(f"Error: {str(e)}")
-    finally:
-        if process:
-            process.terminate()
+            logging.info(f"Iniciando transmisión con:\nVideo: {video}\nAudio: {audio}")
+            
+            cmd = create_stream_command(video, audio)
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=1,
+                universal_newlines=True
+            )
+            
+            # Monitorear salida
+            while True:
+                output = process.stdout.readline()
+                if output == '' and process.poll() is not None:
+                    break
+                if output:
+                    logging.info(output.strip())
+            
+            if process.returncode != 0:
+                raise subprocess.CalledProcessError(process.returncode, cmd)
+                
+        except Exception as e:
+            logging.error(f"Error en transmisión: {str(e)}")
+            logging.info("Reintentando en 30 segundos...")
+            time.sleep(30)
 
 if __name__ == "__main__":
     main()
