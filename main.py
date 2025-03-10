@@ -1,101 +1,37 @@
-import os
-import random
-import subprocess
-import logging
-import time
+FROM python:3.9-slim
 
-# Configuración
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-RTMP_URL = "rtmp://a.rtmp.youtube.com/live2/tumy-gch3-dx73-cg5r-20dy"
-VIDEO_DIR = "videos"
-AUDIO_DIR = "musica_jazz"
+# 1. Actualizar repositorios y añadir multiverse
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    software-properties-common && \
+    add-apt-repository universe && \
+    add-apt-repository multiverse && \
+    apt-get update
 
-def load_media():
-    """Cargar archivos multimedia válidos"""
-    videos = []
-    audios = []
-    
-    for root, _, files in os.walk(VIDEO_DIR):
-        for file in files:
-            if file.endswith((".mp4", ".mkv", ".mov")):
-                videos.append(os.path.join(root, file))
-    
-    for root, _, files in os.walk(AUDIO_DIR):
-        for file in files:
-            if file.endswith((".mp3", ".wav", ".aac")):
-                audios.append(os.path.join(root, file))
-    
-    if not videos:
-        raise FileNotFoundError(f"No videos found in {VIDEO_DIR}")
-    if not audios:
-        raise FileNotFoundError(f"No audio files found in {AUDIO_DIR}")
-    
-    return videos, audios
+# 2. Instalar dependencias principales
+RUN apt-get install -y --no-install-recommends \
+    ffmpeg \
+    curl \
+    git \
+    build-essential \
+    libx264-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-def create_stream_command(video_path, audio_path):
-    """Generar comando FFmpeg optimizado"""
-    return [
-        "ffmpeg",
-        "-loglevel", "info",
-        "-re",
-        "-stream_loop", "-1",
-        "-i", video_path,
-        "-stream_loop", "-1",
-        "-i", audio_path,
-        "-map", "0:v:0",
-        "-map", "1:a:0",
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-b:v", "2500k",
-        "-maxrate", "3000k",
-        "-bufsize", "5000k",
-        "-pix_fmt", "yuv420p",
-        "-g", "50",
-        "-r", "30",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-ar", "44100",
-        "-f", "flv",
-        RTMP_URL
-    ]
+# 3. Instalar Node.js 18.x
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs
 
-def main():
-    videos, audios = load_media()
-    
-    while True:
-        try:
-            video = random.choice(videos)
-            audio = random.choice(audios)
-            
-            logging.info(f"Iniciando transmisión con:\nVideo: {video}\nAudio: {audio}")
-            
-            cmd = create_stream_command(video, audio)
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                bufsize=1,
-                universal_newlines=True
-            )
-            
-            # Monitorear salida
-            while True:
-                output = process.stdout.readline()
-                if output == '' and process.poll() is not None:
-                    break
-                if output:
-                    logging.info(output.strip())
-            
-            if process.returncode != 0:
-                raise subprocess.CalledProcessError(process.returncode, cmd)
-                
-        except Exception as e:
-            logging.error(f"Error en transmisión: {str(e)}")
-            logging.info("Reintentando en 30 segundos...")
-            time.sleep(30)
+WORKDIR /app
 
-if __name__ == "__main__":
-    main()
+# Resto del Dockerfile permanece igual...
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+RUN mkdir -p videos musica_jazz && \
+    chmod -R 755 videos musica_jazz
+
+ENV LD_PRELOAD=libgomp.so.1
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "-u", "main.py"]
