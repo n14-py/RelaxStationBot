@@ -11,7 +11,7 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Copiar archivos necesarios
-COPY package.json package-lock.json /app/
+COPY package.json package.json /app/
 COPY requirements.txt /app/
 
 # Instalar dependencias de Python y Node.js
