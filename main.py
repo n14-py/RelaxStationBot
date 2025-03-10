@@ -5,7 +5,7 @@ from datetime import datetime
 # Carpetas con videos y audios
 videos_departamento = ["videos/departamento_lluvia1.mp4"]
 musica_jazz = ["musica_jazz/jazz1.mp3"]
-musica_naturaleza = ["musica_naturaleza/lluvia1.mp3"]  # Sonido de naturaleza (ejemplo)
+sonidos_naturaleza = ["sonidos_naturaleza/lluvia1.mp3"]  # Corregido con 'sonidos_naturaleza'
 
 def get_today_video_and_audio():
     """Selecciona un video y música aleatorios para el día"""
@@ -17,7 +17,7 @@ def get_today_video_and_audio():
     if video in videos_departamento:
         title = "Departamento con música jazz relajante"
         audio_jazz = random.choice(musica_jazz)
-        audio_naturaleza = random.choice(musica_naturaleza)  # Agregar naturaleza si es necesario
+        audio_naturaleza = random.choice(sonidos_naturaleza)  # Usando la carpeta correcta
     
     return video, audio_jazz, audio_naturaleza, title
 
