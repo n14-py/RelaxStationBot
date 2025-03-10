@@ -1,20 +1,23 @@
-# Usa una imagen base de Node.js
+# Usa Node.js como base
 FROM node:16
 
 # Instalar FFmpeg
 RUN apt-get update && apt-get install -y ffmpeg
 
-# Establecer el directorio de trabajo dentro del contenedor
+# Establecer el directorio de trabajo
 WORKDIR /app
 
-# Copiar los archivos del proyecto al contenedor
-COPY . /app
+# Copiar archivos necesarios para instalar dependencias primero
+COPY package.json package-lock.json /app/
 
-# Instalar las dependencias de Node.js
+# Instalar dependencias
 RUN npm install
 
-# Exponer el puerto que usará la aplicación (por ejemplo, el 3000)
+# Copiar el resto de los archivos del proyecto
+COPY . /app
+
+# Exponer el puerto (ajústalo según tu configuración)
 EXPOSE 3000
 
-# Comando para ejecutar la aplicación
+# Comando para iniciar el servidor
 CMD ["npm", "start"]
