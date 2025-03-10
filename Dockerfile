@@ -10,17 +10,18 @@ RUN apt-get update && \
     gnupg2 \
     ca-certificates \
     software-properties-common \
-    && apt-get update
-
-# Instalar paquetes multimedia
-RUN apt-get install -y --no-install-recommends \
-    ffmpeg \
     curl \
     git \
     build-essential \
     libx264-dev \
     libfdk-aac-dev \
+    ffmpeg \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Instalar Node.js 18.x
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs
 
 # Configurar entorno
 WORKDIR /app
@@ -29,13 +30,20 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Instalar dependencias Node.js
+COPY package*.json ./
+RUN npm install --production
+
 # Copiar aplicación y medios
 COPY . .
-RUN mkdir -p videos musica_jazz && \
-    chmod -R 755 videos musica_jazz
+RUN mkdir -p videos musica_jazz public && \
+    chmod -R 755 videos musica_jazz public
 
 # Variables de entorno
 ENV PYTHONUNBUFFERED=1
 ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libgomp.so.1
+ENV PORT=3000
 
-CMD ["python", "-u", "main.py"]
+EXPOSE 3000
+
+CMD ["sh", "-c", "python -u main.py & node server.js"]
