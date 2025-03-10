@@ -1,28 +1,40 @@
-# Usa Python 3.9 como base
-FROM python:3.9
+# Dockerfile optimizado para streaming con Python + Node.js
+FROM python:3.9-slim
 
-# Instalar FFmpeg y Node.js
+# Instalar dependencias principales
 RUN apt-get update && \
-    apt-get install -y ffmpeg curl && \
-    curl -fsSL https://deb.nodesource.com/setup_16.x | bash - && \
-    apt-get install -y nodejs
+    apt-get install -y \
+    ffmpeg \
+    curl \
+    gnupg \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
-# Establecer el directorio de trabajo
+# Instalar Node.js 16.x
+RUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g npm@latest
+
+# Configurar entorno
 WORKDIR /app
 
-# Copiar archivos necesarios
-COPY package.json package.json /app/
-COPY requirements.txt /app/
+# Copiar primero los requisitos para cachear dependencias
+COPY requirements.txt .
+COPY package*.json ./
 
-# Instalar dependencias de Python y Node.js
-RUN pip install -r requirements.txt
-RUN npm install
+# Instalar dependencias
+RUN pip install --no-cache-dir -r requirements.txt && \
+    npm install --production
 
-# Copiar el resto de los archivos del proyecto
-COPY . /app
+# Copiar toda la aplicación
+COPY . .
 
-# Exponer el puerto 3000
+# Crear directorios para medios
+RUN mkdir -p videos musica_jazz
+
+# Puerto para el servidor Node.js
 EXPOSE 3000
 
-# Ejecutar Python y Node.js en paralelo
+# Comando de inicio optimizado
 CMD ["sh", "-c", "python main.py & node server.js"]
