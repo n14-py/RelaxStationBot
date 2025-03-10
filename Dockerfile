@@ -1,7 +1,7 @@
-# Dockerfile optimizado para streaming con Python + Node.js
+# Dockerfile corregido y compatible
 FROM python:3.9-slim
 
-# Instalar dependencias principales
+# 1. Instalar dependencias base
 RUN apt-get update && \
     apt-get install -y \
     ffmpeg \
@@ -11,30 +11,30 @@ RUN apt-get update && \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar Node.js 16.x
-RUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash - && \
+# 2. Instalar Node.js 18.x (LTS) con npm compatible
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
     apt-get install -y nodejs && \
-    npm install -g npm@latest
+    npm install -g npm@9
 
-# Configurar entorno
+# 3. Configurar entorno
 WORKDIR /app
 
-# Copiar primero los requisitos para cachear dependencias
+# 4. Instalar dependencias Python primero
 COPY requirements.txt .
-COPY package*.json ./
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Instalar dependencias
-RUN pip install --no-cache-dir -r requirements.txt && \
-    npm install --production
-
-# Copiar toda la aplicación
+# 5. Copiar toda la aplicación
 COPY . .
 
-# Crear directorios para medios
+# 6. Instalar dependencias Node.js después de copiar package.json
+COPY package*.json ./
+RUN npm install --production
+
+# 7. Crear directorios para medios
 RUN mkdir -p videos musica_jazz
 
-# Puerto para el servidor Node.js
+# 8. Puerto para el servidor Node.js
 EXPOSE 3000
 
-# Comando de inicio optimizado
+# 9. Comando de inicio
 CMD ["sh", "-c", "python main.py & node server.js"]
