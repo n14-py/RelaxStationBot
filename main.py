@@ -10,7 +10,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 
-RTMP_URL = "rtmp://a.rtmp.youtube.com/live2/tu-clave-aqui"
+RTMP_URL = "rtmp://a.rtmp.youtube.com/live2/tumy-gch3-dx73-cg5r-20dy"
 VIDEO_DIR = "videos"
 AUDIO_DIR = "musica_jazz"
 
