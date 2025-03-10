@@ -30,7 +30,7 @@ else:
 # Preparamos el comando de FFmpeg para mezclar ambos audios y el video
 if audio_jazz:
     # Si solo hay un audio (música de jazz)
-    command = f'ffmpeg -re -stream_loop -1 -i {video} -i {audio_jazz} -c:v libx264 -preset veryfast -maxrate 3000k -bufsize 6000k -pix_fmt yuv420p -g 50 -b:v 2500k -c:a aac -b:a 128k -f flv "rtmp://a.rtmp.youtube.com/live2/91cs-hmzg-9y50-g7q8-2m9j"'
+    command = f'ffmpeg -re -stream_loop -1 -i {video} -i {audio_jazz} -c:v libx264 -preset veryfast -maxrate 3000k -bufsize 6000k -pix_fmt yuv420p -g 50 -b:v 2500k -c:a aac -b:a 128k -f flv "rtmp://a.rtmp.youtube.com/live2/tumy-gch3-dx73-cg5r-20dy"'
 
 # Ejecutar transmisión en vivo
 os.system(command)
