@@ -1,14 +1,18 @@
 FROM python:3.9-slim
 
-# 1. Actualizar repositorios y añadir multiverse
-RUN apt-get update && \
+# 1. Habilitar repositorios necesarios
+RUN sed -i 's/main/main contrib non-free/' /etc/apt/sources.list && \
+    apt-get update && \
     apt-get install -y --no-install-recommends \
-    software-properties-common && \
-    add-apt-repository universe && \
-    add-apt-repository multiverse && \
+    gnupg \
+    software-properties-common
+
+# 2. Añadir repositorio deb-multimedia para codecs
+RUN echo "deb http://www.deb-multimedia.org buster main non-free" >> /etc/apt/sources.list && \
+    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 5C808C2B65558117 && \
     apt-get update
 
-# 2. Instalar dependencias principales
+# 3. Instalar dependencias principales
 RUN apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
@@ -17,21 +21,10 @@ RUN apt-get install -y --no-install-recommends \
     libx264-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 3. Instalar Node.js 18.x
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get install -y nodejs
-
+# 4. Continuar con el resto de la configuración...
 WORKDIR /app
-
-# Resto del Dockerfile permanece igual...
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
 COPY . .
-RUN mkdir -p videos musica_jazz && \
-    chmod -R 755 videos musica_jazz
-
-ENV LD_PRELOAD=libgomp.so.1
-ENV PYTHONUNBUFFERED=1
-
+RUN mkdir -p videos musica_jazz
 CMD ["python", "-u", "main.py"]
