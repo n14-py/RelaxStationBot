@@ -5,7 +5,6 @@ from datetime import datetime
 # Carpetas con videos y audios
 videos_departamento = ["videos/departamento_lluvia1.mp4"]
 musica_jazz = ["musica_jazz/jazz1.mp3"]
-sonidos_naturaleza = ["sonidos_naturaleza/lluvia1.mp3"]  # Corregido con 'sonidos_naturaleza'
 
 def get_today_video_and_audio():
     """Selecciona un video y música aleatorios para el día"""
@@ -17,7 +16,7 @@ def get_today_video_and_audio():
     if video in videos_departamento:
         title = "Departamento con música jazz relajante"
         audio_jazz = random.choice(musica_jazz)
-        audio_naturaleza = random.choice(sonidos_naturaleza)  # Usando la carpeta correcta
+        audio_naturaleza = None
     
     return video, audio_jazz, audio_naturaleza, title
 
@@ -35,10 +34,6 @@ else:
 if audio_jazz and not audio_naturaleza:
     # Si solo hay un audio (música de jazz)
     command = f'ffmpeg -re -stream_loop -1 -i {video} -i {audio_jazz} -c:v libx264 -preset veryfast -maxrate 3000k -bufsize 6000k -pix_fmt yuv420p -g 50 -b:v 2500k -c:a aac -b:a 128k -f flv "rtmp://a.rtmp.youtube.com/live2/tumy-gch3-dx73-cg5r-20dy"'
-
-elif audio_jazz and audio_naturaleza:
-    # Si hay ambos audios (música de jazz y naturaleza)
-    command = f'ffmpeg -re -stream_loop -1 -i {video} -i {audio_jazz} -i {audio_naturaleza} -c:v libx264 -preset veryfast -maxrate 3000k -bufsize 6000k -pix_fmt yuv420p -g 50 -b:v 2500k -c:a aac -b:a 128k -f flv "rtmp://a.rtmp.youtube.com/live2/tumy-gch3-dx73-cg5r-20dy"'
 
 # Ejecutar transmisión en vivo
 os.system(command)
