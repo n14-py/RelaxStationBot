@@ -7,8 +7,8 @@ videos_departamento = []  # No tienes videos, lo dejamos vacío
 videos_cabana = ["videos/cabana1.mp4"]
 videos_departamento_lluvia = ["videos/departamento_lluvia1.mp4"]
 
-musica_jazz = ["musicas_jazz/jazz1.mp3"]
-sonidos_naturaleza = ["musicas_jazz/lluvia1.mp3"]
+musica_jazz = ["musica_jazz/jazz1.mp3"]  # Corregido el nombre de la carpeta
+sonidos_naturaleza = ["musica_jazz/lluvia1.mp3"]  # Corregido el nombre de la carpeta
 
 def get_today_video_and_audio():
     """Selecciona un video y música aleatorios para el día"""
