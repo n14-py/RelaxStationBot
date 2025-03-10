@@ -34,10 +34,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY package*.json ./
 RUN npm install --production
 
-# Copiar aplicación y medios
+# Copiar toda la aplicación
 COPY . .
-RUN mkdir -p videos musica_jazz public && \
-    chmod -R 755 videos musica_jazz public
+
+# Crear directorios necesarios
+RUN mkdir -p videos musica_jazz && \
+    chmod -R 755 videos musica_jazz
 
 # Variables de entorno
 ENV PYTHONUNBUFFERED=1
