@@ -1,14 +1,15 @@
 const express = require('express');
+const path = require('path');
 const http = require('http');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Configurar archivos estáticos
-app.use(express.static('public'));
+// Eliminar línea de archivos estáticos
+// app.use(express.static('public')); <-- Eliminado
 
 // Ruta principal
 app.get('/', (req, res) => {
-  res.sendFile(__dirname + 'index.html');
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // Endpoint de salud
@@ -31,5 +32,5 @@ const server = app.listen(port, () => {
     }).on('error', (err) => {
       console.error('Error en ping:', err.message);
     });
-  }, 300000); // 5 minutos
+  }, 300000);
 });
