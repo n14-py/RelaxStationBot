@@ -1,26 +1,15 @@
 <!DOCTYPE html>
-<html lang="es">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Transmisión en Vivo</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      text-align: center;
-      padding: 50px;
-    }
-    h1 {
-      color: #4CAF50;
-    }
-    p {
-      font-size: 18px;
-    }
-  </style>
+    <title>Streaming Activo</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+        .status { color: #2ecc71; font-size: 24px; }
+    </style>
 </head>
 <body>
-  <h1>Bienvenido a la Transmisión en Vivo</h1>
-  <p>Estamos transmitiendo video y música en vivo. ¡Gracias por unirte!</p>
-  <p>Este servidor está funcionando solo para mantener la transmisión en vivo activa.</p>
+    <h1>Transmisión en Vivo Activa</h1>
+    <p class="status">● EN VIVO</p>
+    <p>Última verificación: <span id="timestamp">${new Date().toLocaleTimeString()}</span></p>
 </body>
 </html>
