@@ -30,7 +30,7 @@ def start_stream():
         "-loglevel", "warning",
         "-threads", "1",
         "-re",
-        "-stream_loop", "-1",
+        "-stream_loop", "-1",  # Parámetro CORRECTO para loop infinito
         "-i", "",  # Video
         "-stream_loop", "-1",
         "-i", "",  # Audio
@@ -60,8 +60,8 @@ def start_stream():
             audio = random.choice(media['audios'])
             
             cmd = ffmpeg_base.copy()
-            cmd[7] = video  # Índice corregido para input video
-            cmd[10] = audio  # Índice corregido para input audio
+            cmd[6] = video  # Índice CORRECTO para input video
+            cmd[9] = audio  # Índice CORRECTO para input audio
             
             logging.info(f"🚀 Iniciando stream:\nVideo: {video}\nAudio: {audio}")
             
@@ -73,7 +73,6 @@ def start_stream():
                 universal_newlines=True
             )
             
-            # Manejo optimizado de logs
             while True:
                 line = process.stdout.readline()
                 if not line and process.poll() is not None:
@@ -82,7 +81,8 @@ def start_stream():
                     logging.info(line.strip())
             
             if process.returncode != 0:
-                raise subprocess.CalledProcessError(process.returncode, ' '.join(cmd))
+                error_msg = f"FFmpeg Error (Code {process.returncode}): {line.strip()}"
+                raise subprocess.CalledProcessError(process.returncode, error_msg)
             
         except Exception as e:
             logging.error(f"❌ Error: {str(e)}")
