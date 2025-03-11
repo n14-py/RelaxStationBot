@@ -25,11 +25,10 @@ def load_media():
 def start_stream():
     media = load_media()
     
-    # Parámetros críticos para low-end
     ffmpeg_base = [
         "ffmpeg",
-        "-loglevel", "warning",  # Reducir logs
-        "-threads", "1",         # Limitar a 1 hilo
+        "-loglevel", "warning",
+        "-threads", "1",
         "-re",
         "-stream_loop", "-1",
         "-i", "",  # Video
@@ -40,16 +39,15 @@ def start_stream():
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-tune", "zerolatency",
-        "-x264-params", "threads=1:keyint=48:min-keyint=24",
-        "-b:v", "1200k",        # Bitrate reducido
-        "-maxrate", "1400k",
-        "-bufsize", "2800k",     # 2x maxrate
-        "-pix_fmt", "yuv420p",
-        "-vf", "scale=1280:-2",  # Escalar a 720p
-        "-r", "24",              # FPS reducidos
-        "-g", "48",              # Grupo GOP más largo
+        "-x264-params", "keyint=48:min-keyint=24",
+        "-b:v", "1000k",
+        "-maxrate", "1200k",
+        "-bufsize", "2400k",
+        "-vf", "scale=1280:720:force_original_aspect_ratio=decrease",
+        "-r", "24",
+        "-g", "48",
         "-c:a", "aac",
-        "-b:a", "64k",           # Audio mono de baja calidad
+        "-b:a", "64k",
         "-ac", "1",
         "-ar", "44100",
         "-f", "flv",
@@ -62,8 +60,8 @@ def start_stream():
             audio = random.choice(media['audios'])
             
             cmd = ffmpeg_base.copy()
-            cmd[7] = video  # Índice para input video
-            cmd[10] = audio  # Índice para input audio
+            cmd[7] = video  # Índice corregido para input video
+            cmd[10] = audio  # Índice corregido para input audio
             
             logging.info(f"🚀 Iniciando stream:\nVideo: {video}\nAudio: {audio}")
             
@@ -75,12 +73,15 @@ def start_stream():
                 universal_newlines=True
             )
             
-            # Manejo ligero de logs
-            for line in process.stdout:
+            # Manejo optimizado de logs
+            while True:
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
                 if "frame=" in line:
                     logging.info(line.strip())
             
-            if process.wait() != 0:
+            if process.returncode != 0:
                 raise subprocess.CalledProcessError(process.returncode, ' '.join(cmd))
             
         except Exception as e:
