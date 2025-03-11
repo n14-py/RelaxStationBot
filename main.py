@@ -39,26 +39,25 @@ def start_stream():
             
             cmd = [
                 "ffmpeg",
-                "-loglevel", "warning",  # Menos logs para reducir I/O
+                "-loglevel", "error",
                 "-re",
                 "-stream_loop", "-1",
-                "-i", video,
+                "-i", video,  # Corregido: video_path -> video
                 "-stream_loop", "-1",
-                "-i", audio,
+                "-i", audio,  # Corregido: audio_path -> audio
                 "-map", "0:v:0",
                 "-map", "1:a:0",
                 "-c:v", "libx264",
-                "-preset", "ultrafast",  # Más rápido que veryfast
-                "-b:v", "1800k",         # Bitrate reducido
+                "-preset", "ultrafast",
+                "-b:v", "1800k",
                 "-maxrate", "2000k",
-                "-bufsize", "4000k",
+                "-bufsize", "3000k",
                 "-pix_fmt", "yuv420p",
-                "-g", "48",             # Grupo de imágenes más largo
-                "-r", "24",             # FPS reducidos
+                "-g", "60",
+                "-r", "25",
                 "-c:a", "aac",
-                "-b:a", "96k",          # Audio más ligero
-                "-ar", "22050",         # Muestreo reducido
-                "-ac", "1",             # Audio mono
+                "-b:a", "128k",
+                "-ar", "44100",
                 "-f", "flv",
                 RTMP_URL
             ]
@@ -73,12 +72,11 @@ def start_stream():
                 universal_newlines=True
             )
             
-            # Manejo eficiente de logs
             while True:
                 output = process.stdout.readline()
-                if not output and process.poll() is not None:
+                if output == '' and process.poll() is not None:
                     break
-                if "frame=" in output:
+                if output:
                     logging.info(output.strip())
             
             if process.returncode != 0:
