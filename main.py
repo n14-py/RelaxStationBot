@@ -39,7 +39,7 @@ def start_stream():
             
             cmd = [
                 "ffmpeg",
-                "-loglevel", "info",
+                "-loglevel", "warning",  # Menos logs para reducir I/O
                 "-re",
                 "-stream_loop", "-1",
                 "-i", video,
@@ -48,16 +48,17 @@ def start_stream():
                 "-map", "0:v:0",
                 "-map", "1:a:0",
                 "-c:v", "libx264",
-                "-preset", "veryfast",
-                "-b:v", "2500k",
-                "-maxrate", "3000k",
-                "-bufsize", "5000k",
+                "-preset", "ultrafast",  # Más rápido que veryfast
+                "-b:v", "1800k",         # Bitrate reducido
+                "-maxrate", "2000k",
+                "-bufsize", "4000k",
                 "-pix_fmt", "yuv420p",
-                "-g", "50",
-                "-r", "30",
+                "-g", "48",             # Grupo de imágenes más largo
+                "-r", "24",             # FPS reducidos
                 "-c:a", "aac",
-                "-b:a", "192k",
-                "-ar", "44100",
+                "-b:a", "96k",          # Audio más ligero
+                "-ar", "22050",         # Muestreo reducido
+                "-ac", "1",             # Audio mono
                 "-f", "flv",
                 RTMP_URL
             ]
@@ -72,11 +73,12 @@ def start_stream():
                 universal_newlines=True
             )
             
+            # Manejo eficiente de logs
             while True:
                 output = process.stdout.readline()
-                if output == '' and process.poll() is not None:
+                if not output and process.poll() is not None:
                     break
-                if output:
+                if "frame=" in output:
                     logging.info(output.strip())
             
             if process.returncode != 0:
