@@ -25,34 +25,34 @@ def load_media():
 def start_stream():
     media = load_media()
     
-   ffmpeg_base = [
-    "ffmpeg",
-    "-loglevel", "error",
-    "-threads", "1",
-    "-re",
-    "-stream_loop", "-1",
-    "-i", "",  # Video
-    "-stream_loop", "-1",
-    "-i", "",  # Audio
-    "-map", "0:v:0",
-    "-map", "1:a:0",
-    "-c:v", "libx264",
-    "-preset", "ultrafast",
-    "-tune", "zerolatency",
-    "-x264-params", "keyint=30:min-keyint=15:scenecut=0",
-    "-b:v", "800k",        # Bitrate ultra bajo para free tier
-    "-maxrate", "1000k",
-    "-bufsize", "2000k",
-    "-vf", "scale=854:480:force_original_aspect_ratio=decrease",  # 480p
-    "-r", "20",            # Reducción FPS
-    "-g", "20",
-    "-c:a", "aac",
-    "-b:a", "48k",         # Audio super ligero
-    "-ac", "1",
-    "-ar", "22050",
-    "-f", "flv",
-    RTMP_URL
-]
+    ffmpeg_base = [
+        "ffmpeg",
+        "-loglevel", "error",
+        "-threads", "1",
+        "-re",
+        "-stream_loop", "-1",
+        "-i", "",  # Video
+        "-stream_loop", "-1",
+        "-i", "",  # Audio
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-tune", "zerolatency",
+        "-x264-params", "keyint=30:min-keyint=15:scenecut=0",
+        "-b:v", "800k",        
+        "-maxrate", "1000k",
+        "-bufsize", "2000k",
+        "-vf", "scale=854:480:force_original_aspect_ratio=decrease", 
+        "-r", "20",            
+        "-g", "20",
+        "-c:a", "aac",
+        "-b:a", "48k",         
+        "-ac", "1",
+        "-ar", "22050",
+        "-f", "flv",
+        RTMP_URL
+    ]
     
     while True:
         try:
@@ -60,8 +60,8 @@ def start_stream():
             audio = random.choice(media['audios'])
             
             cmd = ffmpeg_base.copy()
-            cmd[6] = video  # Índice CORRECTO para input video
-            cmd[9] = audio  # Índice CORRECTO para input audio
+            cmd[6] = video  # Índice para video
+            cmd[9] = audio  # Índice para audio
             
             logging.info(f"🚀 Iniciando stream:\nVideo: {video}\nAudio: {audio}")
             
