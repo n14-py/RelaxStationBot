@@ -15,52 +15,52 @@ VIDEO_DIR = "videos"
 AUDIO_DIR = "musica_jazz"
 
 def load_media():
-    return {
+    media = {
         'videos': [os.path.join(VIDEO_DIR, f) for f in os.listdir(VIDEO_DIR) 
-                  if f.lower().endswith((".mp4", ".mkv"))],
+                  if f.endswith((".mp4", ".mkv"))],
         'audios': [os.path.join(AUDIO_DIR, f) for f in os.listdir(AUDIO_DIR) 
-                  if f.lower().endswith((".mp3", ".aac"))]
+                  if f.endswith((".mp3", ".aac"))]
     }
+    
+    if not media['videos']:
+        raise FileNotFoundError(f"No videos en {VIDEO_DIR}")
+    if not media['audios']:
+        raise FileNotFoundError(f"No audios en {AUDIO_DIR}")
+    
+    return media
 
 def start_stream():
     media = load_media()
-    
-ffmpeg_base = [
-    "ffmpeg",
-    "-loglevel", "error",
-    "-threads", "1",
-    "-re",
-    "-i", "",  # Video (eliminar stream_loop)
-    "-stream_loop", "-1",
-    "-i", "",  # Audio
-    "-map", "0:v:0",
-    "-map", "1:a:0",
-    "-c:v", "libx264",
-    "-preset", "ultrafast",
-    "-tune", "zerolatency",
-    "-x264-params", "keyint=30:min-keyint=15:no-scenecut=1",
-    "-b:v", "600k",  # Reducción adicional
-    "-maxrate", "800k",
-    "-bufsize", "1600k",
-    "-vf", "scale=640:360:force_original_aspect_ratio=decrease",  # 360p
-    "-r", "15",  # 15 FPS
-    "-g", "30",
-    "-c:a", "aac",
-    "-b:a", "32k",  # Calidad mínima
-    "-ac", "1",
-    "-ar", "16000",
-    "-f", "flv",
-    RTMP_URL
-]
     
     while True:
         try:
             video = random.choice(media['videos'])
             audio = random.choice(media['audios'])
             
-            cmd = ffmpeg_base.copy()
-            cmd[6] = video  # Índice para video
-            cmd[9] = audio  # Índice para audio
+            cmd = [
+                "ffmpeg",
+                "-loglevel", "info",
+                "-re",
+                "-stream_loop", "-1",
+                "-i", video,
+                "-stream_loop", "-1",
+                "-i", audio,
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                "-c:v", "libx264",
+                "-preset", "veryfast",
+                "-b:v", "2500k",
+                "-maxrate", "3000k",
+                "-bufsize", "5000k",
+                "-pix_fmt", "yuv420p",
+                "-g", "50",
+                "-r", "30",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-ar", "44100",
+                "-f", "flv",
+                RTMP_URL
+            ]
             
             logging.info(f"🚀 Iniciando stream:\nVideo: {video}\nAudio: {audio}")
             
@@ -73,15 +73,14 @@ ffmpeg_base = [
             )
             
             while True:
-                line = process.stdout.readline()
-                if not line and process.poll() is not None:
+                output = process.stdout.readline()
+                if output == '' and process.poll() is not None:
                     break
-                if "frame=" in line:
-                    logging.info(line.strip())
+                if output:
+                    logging.info(output.strip())
             
             if process.returncode != 0:
-                error_msg = f"FFmpeg Error (Code {process.returncode}): {line.strip()}"
-                raise subprocess.CalledProcessError(process.returncode, error_msg)
+                raise subprocess.CalledProcessError(process.returncode, ' '.join(cmd))
             
         except Exception as e:
             logging.error(f"❌ Error: {str(e)}")
