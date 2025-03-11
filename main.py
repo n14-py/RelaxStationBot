@@ -25,34 +25,33 @@ def load_media():
 def start_stream():
     media = load_media()
     
-    ffmpeg_base = [
-        "ffmpeg",
-        "-loglevel", "error",
-        "-threads", "1",
-        "-re",
-        "-stream_loop", "-1",
-        "-i", "",  # Video
-        "-stream_loop", "-1",
-        "-i", "",  # Audio
-        "-map", "0:v:0",
-        "-map", "1:a:0",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-x264-params", "keyint=30:min-keyint=15:scenecut=0",
-        "-b:v", "800k",        
-        "-maxrate", "1000k",
-        "-bufsize", "2000k",
-        "-vf", "scale=854:480:force_original_aspect_ratio=decrease", 
-        "-r", "20",            
-        "-g", "20",
-        "-c:a", "aac",
-        "-b:a", "48k",         
-        "-ac", "1",
-        "-ar", "22050",
-        "-f", "flv",
-        RTMP_URL
-    ]
+ffmpeg_base = [
+    "ffmpeg",
+    "-loglevel", "error",
+    "-threads", "1",
+    "-re",
+    "-i", "",  # Video (eliminar stream_loop)
+    "-stream_loop", "-1",
+    "-i", "",  # Audio
+    "-map", "0:v:0",
+    "-map", "1:a:0",
+    "-c:v", "libx264",
+    "-preset", "ultrafast",
+    "-tune", "zerolatency",
+    "-x264-params", "keyint=30:min-keyint=15:no-scenecut=1",
+    "-b:v", "600k",  # Reducción adicional
+    "-maxrate", "800k",
+    "-bufsize", "1600k",
+    "-vf", "scale=640:360:force_original_aspect_ratio=decrease",  # 360p
+    "-r", "15",  # 15 FPS
+    "-g", "30",
+    "-c:a", "aac",
+    "-b:a", "32k",  # Calidad mínima
+    "-ac", "1",
+    "-ar", "16000",
+    "-f", "flv",
+    RTMP_URL
+]
     
     while True:
         try:
