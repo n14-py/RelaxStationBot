@@ -25,34 +25,34 @@ def load_media():
 def start_stream():
     media = load_media()
     
-    ffmpeg_base = [
-        "ffmpeg",
-        "-loglevel", "warning",
-        "-threads", "1",
-        "-re",
-        "-stream_loop", "-1",  # Parámetro CORRECTO para loop infinito
-        "-i", "",  # Video
-        "-stream_loop", "-1",
-        "-i", "",  # Audio
-        "-map", "0:v:0",
-        "-map", "1:a:0",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-x264-params", "keyint=48:min-keyint=24",
-        "-b:v", "1000k",
-        "-maxrate", "1200k",
-        "-bufsize", "2400k",
-        "-vf", "scale=1280:720:force_original_aspect_ratio=decrease",
-        "-r", "24",
-        "-g", "48",
-        "-c:a", "aac",
-        "-b:a", "64k",
-        "-ac", "1",
-        "-ar", "44100",
-        "-f", "flv",
-        RTMP_URL
-    ]
+   ffmpeg_base = [
+    "ffmpeg",
+    "-loglevel", "error",
+    "-threads", "1",
+    "-re",
+    "-stream_loop", "-1",
+    "-i", "",  # Video
+    "-stream_loop", "-1",
+    "-i", "",  # Audio
+    "-map", "0:v:0",
+    "-map", "1:a:0",
+    "-c:v", "libx264",
+    "-preset", "ultrafast",
+    "-tune", "zerolatency",
+    "-x264-params", "keyint=30:min-keyint=15:scenecut=0",
+    "-b:v", "800k",        # Bitrate ultra bajo para free tier
+    "-maxrate", "1000k",
+    "-bufsize", "2000k",
+    "-vf", "scale=854:480:force_original_aspect_ratio=decrease",  # 480p
+    "-r", "20",            # Reducción FPS
+    "-g", "20",
+    "-c:a", "aac",
+    "-b:a", "48k",         # Audio super ligero
+    "-ac", "1",
+    "-ar", "22050",
+    "-f", "flv",
+    RTMP_URL
+]
     
     while True:
         try:
