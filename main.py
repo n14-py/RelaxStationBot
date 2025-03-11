@@ -15,52 +15,55 @@ VIDEO_DIR = "videos"
 AUDIO_DIR = "musica_jazz"
 
 def load_media():
-    media = {
+    return {
         'videos': [os.path.join(VIDEO_DIR, f) for f in os.listdir(VIDEO_DIR) 
-                  if f.endswith((".mp4", ".mkv"))],
+                  if f.lower().endswith((".mp4", ".mkv"))],
         'audios': [os.path.join(AUDIO_DIR, f) for f in os.listdir(AUDIO_DIR) 
-                  if f.endswith((".mp3", ".aac"))]
+                  if f.lower().endswith((".mp3", ".aac"))]
     }
-    
-    if not media['videos']:
-        raise FileNotFoundError(f"No videos en {VIDEO_DIR}")
-    if not media['audios']:
-        raise FileNotFoundError(f"No audios en {AUDIO_DIR}")
-    
-    return media
 
 def start_stream():
     media = load_media()
+    
+    # Parámetros críticos para low-end
+    ffmpeg_base = [
+        "ffmpeg",
+        "-loglevel", "warning",  # Reducir logs
+        "-threads", "1",         # Limitar a 1 hilo
+        "-re",
+        "-stream_loop", "-1",
+        "-i", "",  # Video
+        "-stream_loop", "-1",
+        "-i", "",  # Audio
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-tune", "zerolatency",
+        "-x264-params", "threads=1:keyint=48:min-keyint=24",
+        "-b:v", "1200k",        # Bitrate reducido
+        "-maxrate", "1400k",
+        "-bufsize", "2800k",     # 2x maxrate
+        "-pix_fmt", "yuv420p",
+        "-vf", "scale=1280:-2",  # Escalar a 720p
+        "-r", "24",              # FPS reducidos
+        "-g", "48",              # Grupo GOP más largo
+        "-c:a", "aac",
+        "-b:a", "64k",           # Audio mono de baja calidad
+        "-ac", "1",
+        "-ar", "44100",
+        "-f", "flv",
+        RTMP_URL
+    ]
     
     while True:
         try:
             video = random.choice(media['videos'])
             audio = random.choice(media['audios'])
             
-            cmd = [
-                "ffmpeg",
-                "-loglevel", "error",
-                "-re",
-                "-stream_loop", "-1",
-                "-i", video,  # Corregido: video_path -> video
-                "-stream_loop", "-1",
-                "-i", audio,  # Corregido: audio_path -> audio
-                "-map", "0:v:0",
-                "-map", "1:a:0",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-b:v", "1800k",
-                "-maxrate", "2000k",
-                "-bufsize", "3000k",
-                "-pix_fmt", "yuv420p",
-                "-g", "60",
-                "-r", "25",
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-ar", "44100",
-                "-f", "flv",
-                RTMP_URL
-            ]
+            cmd = ffmpeg_base.copy()
+            cmd[7] = video  # Índice para input video
+            cmd[10] = audio  # Índice para input audio
             
             logging.info(f"🚀 Iniciando stream:\nVideo: {video}\nAudio: {audio}")
             
@@ -72,14 +75,12 @@ def start_stream():
                 universal_newlines=True
             )
             
-            while True:
-                output = process.stdout.readline()
-                if output == '' and process.poll() is not None:
-                    break
-                if output:
-                    logging.info(output.strip())
+            # Manejo ligero de logs
+            for line in process.stdout:
+                if "frame=" in line:
+                    logging.info(line.strip())
             
-            if process.returncode != 0:
+            if process.wait() != 0:
                 raise subprocess.CalledProcessError(process.returncode, ' '.join(cmd))
             
         except Exception as e:
