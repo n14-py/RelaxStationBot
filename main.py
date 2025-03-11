@@ -37,30 +37,30 @@ def start_stream():
             video = random.choice(media['videos'])
             audio = random.choice(media['audios'])
             
-            cmd = [
+          cmd = [
                 "ffmpeg",
-                "-loglevel", "info",
+                "-loglevel", "error",
                 "-re",
                 "-stream_loop", "-1",
-                "-i", video,
+                "-i", video_path,
                 "-stream_loop", "-1",
-                "-i", audio,
+                "-i", audio_path,
                 "-map", "0:v:0",
                 "-map", "1:a:0",
                 "-c:v", "libx264",
-                "-preset", "veryfast",
-                "-b:v", "2500k",
-                "-maxrate", "3000k",
-                "-bufsize", "5000k",
+                "-preset", "ultrafast",  # Más rápido que veryfast
+                "-b:v", "1800k",         # Reducir bitrate
+                "-maxrate", "2000k",
+                "-bufsize", "3000k",
                 "-pix_fmt", "yuv420p",
-                "-g", "50",
-                "-r", "30",
+                "-g", "60",
+                "-r", "25",              # Reducir FPS
                 "-c:a", "aac",
-                "-b:a", "192k",
+                "-b:a", "128k",          # Audio más ligero
                 "-ar", "44100",
                 "-f", "flv",
                 RTMP_URL
-            ]
+]
             
             logging.info(f"🚀 Iniciando stream:\nVideo: {video}\nAudio: {audio}")
             
