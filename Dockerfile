@@ -13,11 +13,16 @@ RUN apt-get update && \
     ffmpeg \
     libx264-dev \
     libgomp1 \
+    libgl1 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Instalar Node.js 18.x
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get install -y nodejs
+    apt-get install -y nodejs && \
+    npm install -g pm2
 
 WORKDIR /app
 
@@ -26,18 +31,21 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Instalar dependencias Node.js
-COPY package*.json ./
+COPY package*..json ./
 RUN npm install --production
 
 # Copiar aplicación
 COPY . .
 
-# Configurar permisos
-RUN chmod -R 755 videos musica_jazz
+# Configurar permisos y estructura de directorios
+RUN mkdir -p videos musica_jazz sonidos_naturaleza thumbs && \
+    chmod -R 755 videos musica_jazz sonidos_naturaleza thumbs
 
 # Variables de entorno
 ENV PYTHONUNBUFFERED=1
+ENV NODE_ENV=production
+ENV RTMP_URL=${RTMP_URL}
 
-EXPOSE 3000
+EXPOSE 3000 1935 8080
 
-CMD ["sh", "-c", "python -u main.py & node server.js"]
+CMD ["pm2-runtime", "ecosystem.config.js"]
