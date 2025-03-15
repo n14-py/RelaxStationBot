@@ -1,0 +1,8 @@
+RelaxStationBot/videos/*.mp4 filter=lfs diff=lfs merge=lfs -text
+RelaxStationBot/videos/*.mov filter=lfs diff=lfs merge=lfs -text
+RelaxStationBot/videos/*.avi filter=lfs diff=lfs merge=lfs -text
+RelaxStationBot/videos/*.mkv filter=lfs diff=lfs merge=lfs -text
+RelaxStationBot/videos/*.webm filter=lfs diff=lfs merge=lfs -text
+RelaxStationBot/videos/* filter=lfs diff=lfs merge=lfs -text
+videos/* filter=lfs diff=lfs merge=lfs -text
+*.mp4 filter=lfs diff=lfs merge=lfs -text
