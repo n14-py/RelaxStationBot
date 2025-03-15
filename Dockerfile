@@ -31,7 +31,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Instalar dependencias Node.js
-COPY package*..json ./
+COPY package*.json ./
 RUN npm install --production
 
 # Copiar aplicación
