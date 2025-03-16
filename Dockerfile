@@ -13,7 +13,7 @@ WORKDIR /app
 
 # Copiar código (usando main.py en lugar de app.py)
 COPY requirements.txt .
-COPY main.py .  # 👈 Cambio clave aquí
+COPY main.py . 
 
 # Instalar dependencias
 RUN pip install --no-cache-dir -r requirements.txt
@@ -24,4 +24,4 @@ USER streamer
 
 # Puerto y ejecución
 EXPOSE 10000
-CMD ["python", "main.py"]  # 👈 Y aquí también
+CMD ["python", "main.py"]  
