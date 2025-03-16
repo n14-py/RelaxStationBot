@@ -13,7 +13,22 @@ app = Flask(__name__)
 
 @app.route('/health')
 def health_check():
-    return "OK", 200
+    try:
+        # Verificar montajes
+        required_dirs = ['/media/videos', '/media/sonidos_naturaleza', '/media/musica_jazz']
+        for dir in required_dirs:
+            if not os.path.ismount(dir):
+                return "Mounts not ready", 503
+                
+        # Verificar archivos
+        if not os.listdir('/media/videos'):
+            return "No media files", 503
+            
+        return "OK", 200
+    except Exception as e:
+        return f"Error: {str(e)}", 500
+
+
 
 # Configuración básica
 logging.basicConfig(
@@ -165,6 +180,18 @@ def generate_title(video_path):
         return "Ambiente Relajante en Vivo 24/7"
 
 def start_stream():
+
+    try:
+        logging.info("🔍 Verificando logs de montaje Rclone...")
+        if os.path.exists('/tmp/rclone.log'):
+            with open('/tmp/rclone.log', 'r') as f:
+                logs = f.read()
+                logging.info(f"📄 Logs de Rclone:\n{logs}")
+        else:
+            logging.warning("⚠️ Archivo de logs de Rclone no encontrado")
+    except Exception as e:
+        logging.error(f"❌ Error leyendo logs: {str(e)}")
+    
     content = ContentManager()
     youtube = YouTubeManager()
     
