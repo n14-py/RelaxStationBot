@@ -24,22 +24,14 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 
-# ========== CREDENCIALES (SOLO PARA PRUEBAS LOCALES) ==========
-DRIVE_CREDS = {
-    'client_id': '739473350205-4ma0u6tqp33sdug815b67n4qki69elop.apps.googleusercontent.com',
-    'client_secret': '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',
-    'refresh_token': '1//0hHhOR0N_GQkxCgYIARAAGBESNwF-L9IruyOLldAO6w5xmHBYPx_PFUKkT9kUjMHsPlKa_7T5YkegxaFmDfVDc-CD3r7iu2uiEHo'
-}
-
+# Configuración YouTube
 YOUTUBE_CREDS = {
     'client_id': '913486235878-8f86jgtuccrrcaai3456jab4ujbpan5s.apps.googleusercontent.com',
     'client_secret': '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',
     'refresh_token': '1//0hkLzswQpTRr3CgYIARAAGBESNwF-L9Ir8J2Bfhvmvgcw2RgCBi2LdNBd1DrEKJQCQoY8lj_sny5JfoUfgIe9MMcrpyHhvDfcOhk'
 }
 
-RTMP_URL = "rtmp://a.rtmp.youtube.com/live2/tumy-gch3-dx73-cg5r-20dy"  # <-- Cambia esta URL
-# ================================================================
-
+RTMP_URL = "rtmp://a.rtmp.youtube.com/live2/tumy-gch3-dx73-cg5r-20dy"
 THEME_KEYWORDS = {
     'lluvia': ['lluvia', 'rain', 'chuva', 'lluvialoop'],
     'fuego': ['fuego', 'fire', 'fogata', 'chimenea'],
@@ -59,10 +51,11 @@ class ContentManager:
         
     def load_media(self):
         try:
-            self.media['videos'] = self._get_files('/media/videos', ('.mp4', '.mkv'))
-            self.media['jazz'] = self._get_files('/media/musica_jazz', ('.mp3',))
+            # Paths montados con rclone
+            self.media['videos'] = self._get_files('/mnt/gdrive_videos', ('.mp4', '.mkv'))
+            self.media['jazz'] = self._get_files('/mnt/gdrive_musica', ('.mp3',))
             
-            sonidos_files = self._get_files('/media/sonidos_naturaleza', ('.mp3', '.wav'))
+            sonidos_files = self._get_files('/mnt/gdrive_sonidos', ('.mp3', '.wav'))
             self.media['sonidos'] = {theme: [] for theme in THEME_KEYWORDS}
             self.media['sonidos']['otros'] = []
             
