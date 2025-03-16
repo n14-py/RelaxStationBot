@@ -1,6 +1,6 @@
 FROM python:3.9-slim-buster
 
-# Instalar dependencias del sistema
+# Instalar dependencias
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     gcc \
@@ -11,10 +11,11 @@ RUN apt-get update && apt-get install -y \
     npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar rclone
-RUN curl https://rclone.org/install.sh | bash
+# Instalar rclone y PM2 (para manejar múltiples procesos)
+RUN curl https://rclone.org/install.sh | bash && \
+    npm install pm2 -g
 
-# Crear estructura de directorios
+# Configurar directorios
 RUN mkdir -p \
     /mnt/gdrive_videos \
     /mnt/gdrive_sonidos \
@@ -23,29 +24,22 @@ RUN mkdir -p \
 
 WORKDIR /app
 
-# Copiar configuración y código
-COPY rclone.conf /root/.config/rclone/rclone.conf
-COPY requirements.txt .
-COPY main.py .
-COPY server.js .
-COPY package.json .
+# Copiar archivos
+COPY . .
 
 # Instalar dependencias
 RUN pip install --no-cache-dir -r requirements.txt && \
     npm install
 
-# Configuración de seguridad
-RUN useradd -m streamer && \
-    chown -R streamer:streamer /app && \
-    chown -R streamer:streamer /mnt
+# Permisos y usuario
+RUN chmod +x start.sh && \
+    useradd -m renderuser && \
+    chown -R renderuser:renderuser /app /mnt
 
-USER streamer
+USER renderuser
 
-# Puerto y ejecución
-EXPOSE 10000 3000
+# Puerto expuesto (necesario para Render)
+EXPOSE 10000
 
-CMD sh -c "rclone mount gdrive_videos: /mnt/gdrive_videos --daemon && \
-          rclone mount gdrive_sonidos: /mnt/gdrive_sonidos --daemon && \
-          rclone mount gdrive_musica: /mnt/gdrive_musica --daemon && \
-          python main.py & \
-          node server.js"
+# Comando de inicio optimizado
+CMD [ "pm2-runtime", "start", "ecosystem.config.js" ]
