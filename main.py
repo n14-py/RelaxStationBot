@@ -17,14 +17,14 @@ app = Flask(__name__)
 def health_check():
     return "OK", 200
 
-# Configuración de logging
+# Config logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler()]
 )
 
-# Configuración YouTube
+# Credenciales hardcodeadas
 YOUTUBE_CREDS = {
     'client_id': '913486235878-8f86jgtuccrrcaai3456jab4ujbpan5s.apps.googleusercontent.com',
     'client_secret': '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',
@@ -32,6 +32,14 @@ YOUTUBE_CREDS = {
 }
 
 RTMP_URL = "rtmp://a.rtmp.youtube.com/live2/tumy-gch3-dx73-cg5r-20dy"
+
+# Configuración rclone
+RCLONE_CONFIG = {
+    'videos': '/mnt/gdrive_videos',
+    'sonidos': '/mnt/gdrive_sonidos',
+    'musica': '/mnt/gdrive_musica'
+}
+
 THEME_KEYWORDS = {
     'lluvia': ['lluvia', 'rain', 'chuva', 'lluvialoop'],
     'fuego': ['fuego', 'fire', 'fogata', 'chimenea'],
@@ -47,15 +55,18 @@ class ContentManager:
             'sonidos': {},
             'video_themes': {}
         }
-        self.last_update = time.time()
         
     def load_media(self):
         try:
-            # Paths montados con rclone
-            self.media['videos'] = self._get_files('/mnt/gdrive_videos', ('.mp4', '.mkv'))
-            self.media['jazz'] = self._get_files('/mnt/gdrive_musica', ('.mp3',))
+            # Cargar desde rclone
+            self.media['videos'] = self._get_files(RCLONE_CONFIG['videos'], ('.mp4', '.mkv'))
+            self.media['jazz'] = self._get_files(RCLONE_CONFIG['musica'], ('.mp3',))
             
-            sonidos_files = self._get_files('/mnt/gdrive_sonidos', ('.mp3', '.wav'))
+            if not self.media['videos']:
+                raise Exception("No hay videos en Google Drive")
+                
+            # Procesar sonidos
+            sonidos_files = self._get_files(RCLONE_CONFIG['sonidos'], ('.mp3', '.wav'))
             self.media['sonidos'] = {theme: [] for theme in THEME_KEYWORDS}
             self.media['sonidos']['otros'] = []
             
@@ -65,32 +76,38 @@ class ContentManager:
                             if any(k in filename for k in keys)), 'otros')
                 self.media['sonidos'][theme].append(file)
             
+            # Detectar temas de videos
             self.media['video_themes'] = {
                 video: self._detect_video_theme(video) for video in self.media['videos']
             }
             
-            self.last_update = time.time()
-            logging.info("✅ Medios actualizados correctamente")
+            logging.info("✅ Medios cargados correctamente")
+            return True
+            
         except Exception as e:
-            logging.error(f"❌ Error cargando medios: {str(e)}")
+            logging.error(f"❌ Error crítico: {str(e)}")
+            return False
 
     def _get_files(self, folder, extensions):
-        return [os.path.join(folder, f) for f in sorted(os.listdir(folder)) 
-                if f.lower().endswith(extensions) and not f.startswith('.')]
+        try:
+            return [os.path.join(folder, f) for f in os.listdir(folder) 
+                   if f.lower().endswith(extensions) and not f.startswith('.')]
+        except FileNotFoundError:
+            logging.error(f"❌ Carpeta no encontrada: {folder}")
+            return []
 
     def _detect_video_theme(self, video_path):
         filename = os.path.basename(video_path).lower()
-        return next((theme for theme, keywords in THEME_KEYWORDS.items() 
-                    if any(k in filename for k in keywords)), 'otros')
+        return next((t for t, keys in THEME_KEYWORDS.items() 
+                    if any(k in filename for k in keys)), 'otros')
 
 class YouTubeManager:
     def __init__(self):
-        self.credentials = None
         self.youtube = None
         
     def authenticate(self):
         try:
-            self.credentials = Credentials(
+            creds = Credentials(
                 token=None,
                 refresh_token=YOUTUBE_CREDS['refresh_token'],
                 client_id=YOUTUBE_CREDS['client_id'],
@@ -99,113 +116,103 @@ class YouTubeManager:
                 scopes=['https://www.googleapis.com/auth/youtube']
             )
             
-            if not self.credentials.valid:
-                self.credentials.refresh(Request())
+            if not creds.valid:
+                creds.refresh(Request())
                 
-            self.youtube = build('youtube', 'v3', credentials=self.credentials)
-            logging.info("✅ Autenticación con YouTube exitosa")
+            self.youtube = build('youtube', 'v3', credentials=creds)
+            logging.info("✅ Autenticación YouTube OK")
             return True
         except Exception as e:
-            logging.error(f"❌ Error de autenticación: {str(e)}")
+            logging.error(f"❌ Fallo autenticación: {str(e)}")
             return False
 
-def update_stream_info(self, title):
-    try:
-        response = self.youtube.liveBroadcasts().list(
-            part="id,snippet",
-            broadcastStatus="active"
-        ).execute()
-        
-        items = response.get('items', [])
-        if not items:
-            logging.error("❌ No hay transmisiones activas en YouTube")
-            return False
+    def update_stream(self, title):
+        try:
+            broadcasts = self.youtube.liveBroadcasts().list(
+                part="id,snippet",
+                broadcastStatus="active"
+            ).execute()
             
-        broadcast = items[0]
-        
-        self.youtube.liveBroadcasts().update(
-            part="snippet",
-            body={
-                "id": broadcast['id'],
-                "snippet": {
-                    "title": title,
-                    "description": "Relájate con sonidos naturales 24/7",
-                    "categoryId": "22"
+            if not broadcasts.get('items'):
+                logging.error("⚠️ Crea una transmisión ACTIVA en YouTube Studio")
+                return False
+                
+            broadcast_id = broadcasts['items'][0]['id']
+            
+            self.youtube.liveBroadcasts().update(
+                part="snippet",
+                body={
+                    "id": broadcast_id,
+                    "snippet": {
+                        "title": title,
+                        "description": "Streaming 24/7 de sonidos naturales",
+                        "categoryId": "22"
+                    }
                 }
-            }
-        ).execute()
-        return True
-    except Exception as e:
-        logging.error(f"❌ Error actualizando stream: {str(e)}")
-        return False
-def generate_title(video_path):
-    try:
-        base_name = os.path.basename(video_path)
-        parts = re.split(r'[_.]', re.sub(r'\d+|[()]', ' ', base_name))
-        location = next((p.capitalize() for p in parts if any(kw in p.lower() 
-                       for kw in ['departamento', 'cabana', 'cueva', 'sala'])), "Ambiente")
-        
-        theme_keyword = next((p.lower() for p in parts if any(
-            k in p.lower() for k in sum(THEME_KEYWORDS.values(), []))), "")
-            
-        theme_map = {
-            'lluvia': 'Lluvia Relajante',
-            'fuego': 'Fuego Cremoso',
-            'viento': 'Viento Fresco',
-            'bosque': 'Bosque Tropical'
-        }
-        theme = theme_map.get(next((t for t, keys in THEME_KEYWORDS.items() 
-                                  if any(k in theme_keyword for k in keys)), 'otros'), 
-                                  'Sonidos Naturales')
-        return f"{location} • {theme} • Transmisión 24/7"
-    except:
-        return "Ambiente Relajante en Vivo 24/7"
+            ).execute()
+            return True
+        except Exception as e:
+            logging.error(f"❌ Error actualizando stream: {str(e)}")
+            return False
 
-def start_stream():
-    content = ContentManager()
+def generar_titulo(video_path):
+    try:
+        nombre = os.path.basename(video_path)
+        partes = re.split(r'[_.-]', nombre)
+        ubicacion = next((p.capitalize() for p in partes if any(kw in p.lower() 
+                        for kw in ['cabaña', 'bosque', 'rio', 'montaña']), "Ambiente")
+                        
+        tema = next((t for t in THEME_KEYWORDS if t in nombre.lower()), 'relax')
+        return f"{ubicacion} • {tema.capitalize()} • Streaming 24/7"
+    except:
+        return "Sonidos Naturales en Vivo"
+
+def iniciar_stream():
+    contenido = ContentManager()
     youtube = YouTubeManager()
     
     if not youtube.authenticate():
         return
     
-    content.load_media()
+    if not contenido.load_media():
+        return
     
-    schedule = [
-        ('jazz', timedelta(hours=8)),
-        ('naturaleza', timedelta(hours=8)),
-        ('combinado', timedelta(hours=8))
+    secuencia = [
+        ('jazz', 8), 
+        ('naturaleza', 8),
+        ('combinado', 8)
     ]
-    current_phase = 0
-    phase_start = datetime.now()
+    fase_actual = 0
+    inicio_fase = datetime.now()
     
     while True:
         try:
-            if time.time() - content.last_update > 3600:
-                content.load_media()
+            # Rotar fases cada 8 horas
+            if (datetime.now() - inicio_fase).total_seconds() >= secuencia[fase_actual][1] * 3600:
+                fase_actual = (fase_actual + 1) % len(secuencia)
+                inicio_fase = datetime.now()
+                logging.info(f"🔄 Cambiando a fase: {secuencia[fase_actual][0].upper()}")
             
-            elapsed = datetime.now() - phase_start
-            if elapsed >= schedule[current_phase][1]:
-                current_phase = (current_phase + 1) % 3
-                phase_start = datetime.now()
-                logging.info(f"🔄 Cambiando a fase: {schedule[current_phase][0].upper()}")
+            # Seleccionar medios
+            tema = secuencia[fase_actual][0]
+            video = random.choice(contenido.media['videos'])
+            video_tema = contenido.media['video_themes'][video]
             
-            theme = schedule[current_phase][0]
-            video = random.choice(content.media['videos'])
-            video_theme = content.media['video_themes'][video]
-            
-            if theme == 'naturaleza':
-                audio = random.choice(content.media['sonidos'].get(video_theme, []))
-            elif theme == 'jazz':
-                audio = random.choice(content.media['jazz'])
+            if tema == 'naturaleza':
+                audio = random.choice(contenido.media['sonidos'].get(video_tema, []))
+            elif tema == 'jazz':
+                audio = random.choice(contenido.media['jazz'])
             else:
-                audio = f"concat:{random.choice(content.media['jazz'])}|{random.choice(content.media['sonidos'].get(video_theme, []))}"
+                audio = f"concat:{random.choice(contenido.media['jazz'])}|{random.choice(contenido.media['sonidos'].get(video_tema, []))}"
             
-            title = generate_title(video)
-            youtube.update_stream_info(title)
+            # Actualizar YouTube
+            titulo = generar_titulo(video)
+            youtube.update_stream(titulo)
             
+            # Comando FFmpeg
             cmd = [
                 "ffmpeg",
-                "-loglevel", "warning",
+                "-loglevel", "error",
                 "-re",
                 "-stream_loop", "-1",
                 "-i", video,
@@ -214,38 +221,36 @@ def start_stream():
                 "-map", "1:a:0",
                 "-c:v", "libx264",
                 "-preset", "ultrafast",
-                "-b:v", "2000k",
-                "-maxrate", "2500k",
+                "-b:v", "2500k",
+                "-maxrate", "3000k",
                 "-bufsize", "5000k",
                 "-pix_fmt", "yuv420p",
-                "-g", "50",
-                "-r", "25",
+                "-g", "60",
+                "-r", "30",
                 "-c:a", "aac",
-                "-b:a", "128k",
-                "-ar", "44100",
-                "-t", "08:00:00",
+                "-b:a", "160k",
+                "-ar", "48000",
                 "-f", "flv",
                 RTMP_URL
             ]
             
-            logging.info(f"🎬 Iniciando transmisión {theme.upper()}:\n📹 {video}\n🔊 {audio}")
+            logging.info(f"▶️ Iniciando {tema.upper()}\nVideo: {os.path.basename(video)}\nAudio: {os.path.basename(audio)}")
             
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            proceso = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             
-            start_time = time.time()
-            while time.time() - start_time < 28800:
-                output = process.stdout.readline()
-                if output: logging.info(output.strip())
-                time.sleep(1)
-            
-            process.terminate()
-            logging.info("🔄 Preparando siguiente transmisión...")
+            # Mantener proceso activo
+            inicio = time.time()
+            while time.time() - inicio < 28800:  # 8 horas
+                time.sleep(10)
+                
+            proceso.terminate()
+            logging.info("⏭️ Preparando siguiente transmisión...")
             time.sleep(30)
             
         except Exception as e:
-            logging.error(f"🔥 Error crítico: {str(e)}")
+            logging.error(f"🔥 Error grave: {str(e)}")
             time.sleep(60)
-            content.load_media()
+            contenido.load_media()
 
 def run_server():
     port = int(os.environ.get('PORT', 10000))
@@ -254,11 +259,11 @@ def run_server():
 if __name__ == "__main__":
     import threading
     
-    # Iniciar servidor web en segundo plano
-    server_thread = threading.Thread(target=run_server)
-    server_thread.daemon = True
-    server_thread.start()
+    # Servidor web en segundo plano
+    threading.Thread(target=run_server, daemon=True).start()
     
-    # Iniciar streaming después de 5 segundos
-    time.sleep(5)
-    start_stream()
+    # Esperar montaje de rclone
+    time.sleep(15)
+    
+    # Iniciar streaming
+    iniciar_stream()
