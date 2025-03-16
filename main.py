@@ -109,33 +109,35 @@ class YouTubeManager:
             logging.error(f"❌ Error de autenticación: {str(e)}")
             return False
 
-    def update_stream_info(self, title):
-        try:
-            broadcast = self.youtube.liveBroadcasts().list(
-                part="id,snippet",
-                broadcastStatus="active"
-            ).execute().get('items', [{}])[0]
-            
-            if not broadcast:
-                logging.error("No hay transmisiones activas")
-                return False
-                
-            self.youtube.liveBroadcasts().update(
-                part="snippet",
-                body={
-                    "id": broadcast['id'],
-                    "snippet": {
-                        "title": title,
-                        "description": "Relájate con sonidos naturales 24/7",
-                        "categoryId": "22"
-                    }
-                }
-            ).execute()
-            return True
-        except Exception as e:
-            logging.error(f"❌ Error actualizando stream: {str(e)}")
+def update_stream_info(self, title):
+    try:
+        response = self.youtube.liveBroadcasts().list(
+            part="id,snippet",
+            broadcastStatus="active"
+        ).execute()
+        
+        items = response.get('items', [])
+        if not items:
+            logging.error("❌ No hay transmisiones activas en YouTube")
             return False
-
+            
+        broadcast = items[0]
+        
+        self.youtube.liveBroadcasts().update(
+            part="snippet",
+            body={
+                "id": broadcast['id'],
+                "snippet": {
+                    "title": title,
+                    "description": "Relájate con sonidos naturales 24/7",
+                    "categoryId": "22"
+                }
+            }
+        ).execute()
+        return True
+    except Exception as e:
+        logging.error(f"❌ Error actualizando stream: {str(e)}")
+        return False
 def generate_title(video_path):
     try:
         base_name = os.path.basename(video_path)
