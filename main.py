@@ -8,6 +8,12 @@ from datetime import datetime, timedelta
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
+from flask import Flask
+app = Flask(__name__)
+
+@app.route('/health')
+def health_check():
+    return "OK", 200
 
 # Configuración básica
 logging.basicConfig(
@@ -245,4 +251,6 @@ def start_stream():
             content.load_media()
 
 if __name__ == "__main__":
+    import threading
+    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=10000)).start()
     start_stream()
