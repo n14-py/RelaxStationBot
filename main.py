@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timedelta
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 
 # Configuración básica
 logging.basicConfig(
@@ -16,11 +16,21 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 
-SCOPES = ['https://www.googleapis.com/auth/youtube']
-CLIENT_SECRETS_FILE = 'client_secret.json'
-RTMP_URL = "rtmp://a.rtmp.youtube.com/live2/tumy-gch3-dx73-cg5r-20dy"
+# Configuración Google Drive (Tu cuenta de archivos)
+DRIVE_CREDS = {
+    'client_id': '739473350205-4ma0u6tqp33sdug815b67n4qki69elop.apps.googleusercontent.com',
+    'client_secret': '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',
+    'refresh_token': '1//0hHhOR0N_GQkxCgYIARAAGBESNwF-L9IruyOLldAO6w5xmHBYPx_PFUKkT9kUjMHsPlKa_7T5YkegxaFmDfVDc-CD3r7iu2uiEHo'
+}
 
-# Diccionario de detección de temas
+# Configuración YouTube (Tu cuenta de streaming)
+YOUTUBE_CREDS = {
+    'client_id': '913486235878-8f86jgtuccrrcaai3456jab4ujbpan5s.apps.googleusercontent.com',  # Reemplazar con tus datos reales
+    'client_secret': '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',  # Reemplazar con tus datos reales
+    'refresh_token': 'REFRESH_TOKEN_YOUTUBE'  # Reemplazar con tus datos reales
+}
+
+RTMP_URL = "rtmp://a.rtmp.youtube.com/live2/tumy-gch3-dx73-cg5r-20dy"
 THEME_KEYWORDS = {
     'lluvia': ['lluvia', 'rain', 'chuva', 'lluvialoop'],
     'fuego': ['fuego', 'fire', 'fogata', 'chimenea', 'fogue'],
@@ -40,12 +50,11 @@ class ContentManager:
         
     def load_media(self):
         try:
-            # Cargar archivos
-            self.media['videos'] = self._get_files('videos', ('.mp4', '.mkv'))
-            self.media['jazz'] = self._get_files('musica_jazz', ('.mp3'))
+            # Cargar desde Google Drive montado
+            self.media['videos'] = self._get_files('/media/videos', ('.mp4', '.mkv'))
+            self.media['jazz'] = self._get_files('/media/musica_jazz', ('.mp3',))
             
-            # Cargar y clasificar sonidos
-            sonidos_files = self._get_files('sonidos_naturaleza', ('.mp3', '.wav'))
+            sonidos_files = self._get_files('/media/sonidos_naturaleza', ('.mp3', '.wav'))
             self.media['sonidos'] = {theme: [] for theme in THEME_KEYWORDS}
             self.media['sonidos']['otros'] = []
             
@@ -55,7 +64,6 @@ class ContentManager:
                             if any(k in filename for k in keys)), 'otros')
                 self.media['sonidos'][theme].append(file)
             
-            # Mapear temas de videos
             self.media['video_themes'] = {}
             for video in self.media['videos']:
                 self.media['video_themes'][video] = self._detect_video_theme(video)
@@ -78,43 +86,50 @@ class YouTubeManager:
     def __init__(self):
         self.credentials = None
         self.youtube = None
-        self.live_broadcast_id = None
         
     def authenticate(self):
         try:
-            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, SCOPES)
-            self.credentials = flow.run_local_server(port=8080)
+            self.credentials = Credentials(
+                token=None,
+                refresh_token=YOUTUBE_CREDS['refresh_token'],
+                client_id=YOUTUBE_CREDS['client_id'],
+                client_secret=YOUTUBE_CREDS['client_secret'],
+                token_uri="https://oauth2.googleapis.com/token",
+                scopes=['https://www.googleapis.com/auth/youtube']
+            )
+            
+            if not self.credentials.valid:
+                self.credentials.refresh(Request())
+                
             self.youtube = build('youtube', 'v3', credentials=self.credentials)
             logging.info("✅ Autenticación con YouTube exitosa")
+            return True
         except Exception as e:
             logging.error(f"❌ Error de autenticación: {str(e)}")
-            raise
+            return False
 
-    def update_stream_info(self, title, thumbnail_path=None):
+    def update_stream_info(self, title):
         try:
-            request = self.youtube.liveBroadcasts().update(
-                part="snippet,status",
+            broadcast = self.youtube.liveBroadcasts().list(
+                part="id,snippet",
+                broadcastStatus="active"
+            ).execute().get('items', [{}])[0]
+            
+            if not broadcast:
+                logging.error("No hay transmisiones activas")
+                return False
+                
+            self.youtube.liveBroadcasts().update(
+                part="snippet",
                 body={
-                    "id": self.live_broadcast_id,
+                    "id": broadcast['id'],
                     "snippet": {
                         "title": title,
-                        "description": "Relájate con sonidos naturales y música suave las 24 horas del día",
+                        "description": "Relájate con sonidos naturales 24/7",
                         "categoryId": "22"
-                    },
-                    "status": {
-                        "privacyStatus": "public"
                     }
                 }
-            )
-            response = request.execute()
-            
-            if thumbnail_path:
-                self.youtube.thumbnails().set(
-                    videoId=response['id'],
-                    media_body=thumbnail_path
-                ).execute()
-                logging.info(f"✅ Miniatura actualizada: {thumbnail_path}")
-                
+            ).execute()
             return True
         except Exception as e:
             logging.error(f"❌ Error actualizando stream: {str(e)}")
@@ -123,16 +138,13 @@ class YouTubeManager:
 def generate_title(video_path):
     try:
         base_name = os.path.basename(video_path)
-        clean_name = re.sub(r'\d+|[()]', ' ', base_name)
-        
-        # Extraer ubicación y tema
-        parts = re.split(r'[_.]', clean_name)
-        location = next((p.capitalize() for p in parts if any(kw in p.lower() for kw in 
-                     ['departamento', 'cabana', 'cueva', 'sala'])), "Ambiente")
+        parts = re.split(r'[_.]', re.sub(r'\d+|[()]', ' ', base_name))
+        location = next((p.capitalize() for p in parts if any(kw in p.lower() 
+                       for kw in ['departamento', 'cabana', 'cueva', 'sala'])), "Ambiente")
         
         theme_keyword = next((p.lower() for p in parts if any(
             k in p.lower() for k in sum(THEME_KEYWORDS.values(), []))), "")
-        
+            
         theme_map = {
             'lluvia': 'Lluvia Relajante',
             'fuego': 'Fuego Cremoso',
@@ -142,32 +154,18 @@ def generate_title(video_path):
         theme = theme_map.get(next((t for t, keys in THEME_KEYWORDS.items() 
                                   if any(k in theme_keyword for k in keys)), 'otros'), 
                                   'Sonidos Naturales')
-        
         return f"{location} • {theme} • Transmisión 24/7"
     except:
         return "Ambiente Relajante en Vivo 24/7"
-
-def generate_thumbnail(video_path):
-    try:
-        output_path = "thumbnail.jpg"
-        subprocess.run([
-            "ffmpeg",
-            "-i", video_path,
-            "-ss", "00:01:00",
-            "-vframes", "1",
-            "-y", output_path
-        ], check=True, capture_output=True)
-        return output_path
-    except Exception as e:
-        logging.error(f"❌ Error generando miniatura: {str(e)}")
-        return None
 
 def start_stream():
     content = ContentManager()
     youtube = YouTubeManager()
     
+    if not youtube.authenticate():
+        return
+    
     content.load_media()
-    youtube.authenticate()
     
     schedule = [
         ('jazz', timedelta(hours=8)),
@@ -179,11 +177,9 @@ def start_stream():
     
     while True:
         try:
-            # Actualizar contenido cada hora
             if time.time() - content.last_update > 3600:
                 content.load_media()
             
-            # Determinar fase actual
             elapsed = datetime.now() - phase_start
             if elapsed >= schedule[current_phase][1]:
                 current_phase = (current_phase + 1) % 3
@@ -194,29 +190,16 @@ def start_stream():
             video = random.choice(content.media['videos'])
             video_theme = content.media['video_themes'][video]
             
-            # Selección de audio
             if theme == 'naturaleza':
-                audio_files = content.media['sonidos'].get(video_theme, [])
-                audio = random.choice(audio_files) if audio_files else ""
-                if not audio:
-                    logging.warning("⚠️ No hay sonidos para el tema del video, usando aleatorio")
-                    audio = random.choice(sum(content.media['sonidos'].values(), []))
+                audio = random.choice(content.media['sonidos'].get(video_theme, []))
             elif theme == 'jazz':
                 audio = random.choice(content.media['jazz'])
             else:
-                audio_jazz = random.choice(content.media['jazz'])
-                audio_nat = random.choice(content.media['sonidos'].get(video_theme, []))
-                audio = f"concat:{audio_jazz}|{audio_nat}"
+                audio = f"concat:{random.choice(content.media['jazz'])}|{random.choice(content.media['sonidos'].get(video_theme, []))}"
             
-            # Generar metadatos
             title = generate_title(video)
-            thumbnail = generate_thumbnail(video)
+            youtube.update_stream_info(title)
             
-            # Actualizar YouTube
-            if youtube.update_stream_info(title, thumbnail):
-                logging.info(f"📺 Título actualizado: {title}")
-            
-            # Configurar FFmpeg
             cmd = [
                 "ffmpeg",
                 "-loglevel", "warning",
@@ -242,21 +225,14 @@ def start_stream():
                 RTMP_URL
             ]
             
-            logging.info(f"🎬 Iniciando transmisión {theme.upper()}:\n📹 Video: {video}\n🔊 Audio: {audio}")
+            logging.info(f"🎬 Iniciando transmisión {theme.upper()}:\n📹 {video}\n🔊 {audio}")
             
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True
-            )
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             
-            # Monitorear transmisión
             start_time = time.time()
-            while time.time() - start_time < 28800:  # 8horas
+            while time.time() - start_time < 28800:
                 output = process.stdout.readline()
-                if output:
-                    logging.info(output.strip())
+                if output: logging.info(output.strip())
                 time.sleep(1)
             
             process.terminate()
