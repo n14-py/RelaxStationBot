@@ -1,6 +1,6 @@
 FROM python:3.9-slim
 
-# Instalar dependencias esenciales
+# Instalar dependencias
 RUN apt-get update && \
     apt-get install -y \
     ffmpeg \
@@ -10,7 +10,8 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 # Configurar Rclone
-COPY rclone.conf /root/.config/rclone/rclone.conf
+COPY rclone.conf /etc/rclone/rclone.conf
+RUN chmod 600 /etc/rclone/rclone.conf
 
 # Copiar aplicación
 WORKDIR /app
@@ -19,15 +20,15 @@ COPY . .
 # Instalar dependencias Python
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Puerto obligatorio para Render
+# Puerto obligatorio
 EXPOSE 10000
 
-# Usar dumb-init como entrypoint
+# Entrypoint mejorado
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 
-# Comando de inicio mejorado
-CMD ["sh", "-c", "rclone mount gdrive_videos: /media/videos --daemon && \
-                  rclone mount gdrive_sonidos: /media/sonidos_naturaleza --daemon && \
-                  rclone mount gdrive_musica: /media/musica_jazz --daemon && \
-                  sleep 10 && \
+# Script de inicio
+CMD ["sh", "-c", "rclone mount gdrive_videos: /media/videos --config /etc/rclone/rclone.conf --daemon --log-file /tmp/rclone.log && \
+                  rclone mount gdrive_sonidos: /media/sonidos_naturaleza --config /etc/rclone/rclone.conf --daemon --log-file /tmp/rclone.log && \
+                  rclone mount gdrive_musica: /media/musica_jazz --config /etc/rclone/rclone.conf --daemon --log-file /tmp/rclone.log && \
+                  sleep 20 && \
                   python -u main.py"]
