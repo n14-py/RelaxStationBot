@@ -33,7 +33,7 @@ DRIVE_CREDS = {
 YOUTUBE_CREDS = {
     'client_id': '913486235878-8f86jgtuccrrcaai3456jab4ujbpan5s.apps.googleusercontent.com',  # Reemplazar con tus datos reales
     'client_secret': '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',  # Reemplazar con tus datos reales
-    'refresh_token': 'REFRESH_TOKEN_YOUTUBE'  # Reemplazar con tus datos reales
+    'refresh_token': '1//0hkLzswQpTRr3CgYIARAAGBESNwF-L9Ir8J2Bfhvmvgcw2RgCBi2LdNBd1DrEKJQCQoY8lj_sny5JfoUfgIe9MMcrpyHhvDfcOhk'  # Reemplazar con tus datos reales
 }
 
 RTMP_URL = "rtmp://a.rtmp.youtube.com/live2/tumy-gch3-dx73-cg5r-20dy"
