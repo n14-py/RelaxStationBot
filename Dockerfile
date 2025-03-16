@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y \
 RUN curl https://rclone.org/install.sh | bash && \
     npm install pm2 -g
 
-# Configurar usuario y directorios
+# Configurar usuario y variables
 RUN useradd -m renderuser && \
     mkdir -p \
     /mnt/gdrive_videos \
@@ -27,8 +27,12 @@ RUN useradd -m renderuser && \
 WORKDIR /app
 
 # Copiar configuración rclone
+RUN mkdir -p /home/renderuser/.config/rclone
 COPY rclone.conf /home/renderuser/.config/rclone/rclone.conf
 RUN chown -R renderuser:renderuser /home/renderuser/.config
+
+# Variables de entorno
+ENV RCLONE_CONFIG=/home/renderuser/.config/rclone/rclone.conf
 
 # Copiar código
 COPY . .
@@ -39,8 +43,6 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 
 USER renderuser
 
-# Puerto expuesto (Render necesita este puerto)
 EXPOSE 10000
 
-# Comando optimizado
 CMD [ "pm2-runtime", "start", "ecosystem.config.js" ]
