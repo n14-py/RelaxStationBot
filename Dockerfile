@@ -1,48 +1,37 @@
 FROM python:3.9-slim-buster
 
-# Instalar dependencias
 RUN apt-get update && apt-get install -y \
     ffmpeg \
-    gcc \
-    python3-dev \
     curl \
     unzip \
-    nodejs \
-    npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar rclone y PM2
-RUN curl https://rclone.org/install.sh | bash && \
-    npm install pm2 -g
+# Instalar rclone
+RUN curl https://rclone.org/install.sh | bash
 
-# Configurar usuario y variables
-RUN useradd -m renderuser && \
-    mkdir -p \
-    /mnt/gdrive_videos \
-    /mnt/gdrive_sonidos \
-    /mnt/gdrive_musica \
-    /app && \
-    chown -R renderuser:renderuser /app /mnt
+# Configurar usuario
+RUN useradd -m appuser && \
+    mkdir -p /mnt/gdrive_{videos,sonidos,musica} && \
+    chown -R appuser:appuser /mnt
 
 WORKDIR /app
 
 # Copiar configuración rclone
-RUN mkdir -p /home/renderuser/.config/rclone
-COPY rclone.conf /home/renderuser/.config/rclone/rclone.conf
-RUN chown -R renderuser:renderuser /home/renderuser/.config
+COPY rclone.conf /home/appuser/.config/rclone/rclone.conf
+RUN chmod 600 /home/appuser/.config/rclone/rclone.conf && \
+    chown -R appuser:appuser /home/appuser/.config
 
-# Variables de entorno
-ENV RCLONE_CONFIG=/home/renderuser/.config/rclone/rclone.conf
+# Variables críticas
+ENV RCLONE_CONFIG=/home/appuser/.config/rclone/rclone.conf
 
-# Copiar código
 COPY . .
 
 # Instalar dependencias
-RUN pip install --no-cache-dir -r requirements.txt && \
-    npm install
+RUN pip install --no-cache-dir -r requirements.txt
 
-USER renderuser
+USER appuser
 
-EXPOSE 10000
-
-CMD [ "pm2-runtime", "start", "ecosystem.config.js" ]
+CMD sh -c "rclone mount gdrive_videos: /mnt/gdrive_videos --daemon && \
+          rclone mount gdrive_sonidos: /mnt/gdrive_sonidos --daemon && \
+          rclone mount gdrive_musica: /mnt/gdrive_musica --daemon && \
+          python main.py"
