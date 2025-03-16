@@ -1,34 +1,28 @@
-FROM python:3.9-slim
+# Dockerfile
+FROM python:3.9-slim-buster
 
-# Instalar dependencias
-RUN apt-get update && \
-    apt-get install -y \
+# Instalar dependencias del sistema
+RUN apt-get update && apt-get install -y \
     ffmpeg \
-    rclone \
-    fuse \
-    dumb-init \
+    gcc \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Configurar Rclone
-COPY rclone.conf /etc/rclone/rclone.conf
-RUN chmod 600 /etc/rclone/rclone.conf
-
-# Copiar aplicación
+# Crear estructura de directorios
+RUN mkdir -p /app/media/{videos,musica_jazz,sonidos_naturaleza}
 WORKDIR /app
-COPY . .
 
-# Instalar dependencias Python
+# Copiar código y dependencias
+COPY requirements.txt .
+COPY app.py .
+
+# Instalar dependencias de Python
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Puerto obligatorio
+# Crear usuario no root
+RUN useradd -m streamer && chown -R streamer:streamer /app
+USER streamer
+
+# Configuración de puertos y punto de entrada
 EXPOSE 10000
-
-# Entrypoint mejorado
-ENTRYPOINT ["/usr/bin/dumb-init", "--"]
-
-# Script de inicio
-CMD ["sh", "-c", "rclone mount gdrive_videos: /media/videos --config /etc/rclone/rclone.conf --daemon --log-file /tmp/rclone.log && \
-                  rclone mount gdrive_sonidos: /media/sonidos_naturaleza --config /etc/rclone/rclone.conf --daemon --log-file /tmp/rclone.log && \
-                  rclone mount gdrive_musica: /media/musica_jazz --config /etc/rclone/rclone.conf --daemon --log-file /tmp/rclone.log && \
-                  sleep 20 && \
-                  python -u main.py"]
+CMD ["python", "app.py"]
