@@ -9,37 +9,40 @@ from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from flask import Flask
+from waitress import serve
+
 app = Flask(__name__)
 
 @app.route('/health')
 def health_check():
     return "OK", 200
 
-# Configuración básica
+# Configuración de logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler()]
 )
 
-# Configuración Google Drive (Tu cuenta de archivos)
+# ========== CREDENCIALES (SOLO PARA PRUEBAS LOCALES) ==========
 DRIVE_CREDS = {
     'client_id': '739473350205-4ma0u6tqp33sdug815b67n4qki69elop.apps.googleusercontent.com',
     'client_secret': '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',
     'refresh_token': '1//0hHhOR0N_GQkxCgYIARAAGBESNwF-L9IruyOLldAO6w5xmHBYPx_PFUKkT9kUjMHsPlKa_7T5YkegxaFmDfVDc-CD3r7iu2uiEHo'
 }
 
-# Configuración YouTube (Tu cuenta de streaming)
 YOUTUBE_CREDS = {
-    'client_id': '913486235878-8f86jgtuccrrcaai3456jab4ujbpan5s.apps.googleusercontent.com',  # Reemplazar con tus datos reales
-    'client_secret': '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',  # Reemplazar con tus datos reales
-    'refresh_token': '1//0hkLzswQpTRr3CgYIARAAGBESNwF-L9Ir8J2Bfhvmvgcw2RgCBi2LdNBd1DrEKJQCQoY8lj_sny5JfoUfgIe9MMcrpyHhvDfcOhk'  # Reemplazar con tus datos reales
+    'client_id': '913486235878-8f86jgtuccrrcaai3456jab4ujbpan5s.apps.googleusercontent.com',
+    'client_secret': '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',
+    'refresh_token': '1//0hkLzswQpTRr3CgYIARAAGBESNwF-L9Ir8J2Bfhvmvgcw2RgCBi2LdNBd1DrEKJQCQoY8lj_sny5JfoUfgIe9MMcrpyHhvDfcOhk'
 }
 
-RTMP_URL = "rtmp://a.rtmp.youtube.com/live2/tumy-gch3-dx73-cg5r-20dy"
+RTMP_URL = "rtmp://a.rtmp.youtube.com/live2/tumy-gch3-dx73-cg5r-20dy"  # <-- Cambia esta URL
+# ================================================================
+
 THEME_KEYWORDS = {
     'lluvia': ['lluvia', 'rain', 'chuva', 'lluvialoop'],
-    'fuego': ['fuego', 'fire', 'fogata', 'chimenea', 'fogue'],
+    'fuego': ['fuego', 'fire', 'fogata', 'chimenea'],
     'viento': ['viento', 'wind', 'vent', 'ventisca'],
     'bosque': ['bosque', 'jungla', 'forest', 'selva']
 }
@@ -56,7 +59,6 @@ class ContentManager:
         
     def load_media(self):
         try:
-            # Cargar desde Google Drive montado
             self.media['videos'] = self._get_files('/media/videos', ('.mp4', '.mkv'))
             self.media['jazz'] = self._get_files('/media/musica_jazz', ('.mp3',))
             
@@ -70,9 +72,9 @@ class ContentManager:
                             if any(k in filename for k in keys)), 'otros')
                 self.media['sonidos'][theme].append(file)
             
-            self.media['video_themes'] = {}
-            for video in self.media['videos']:
-                self.media['video_themes'][video] = self._detect_video_theme(video)
+            self.media['video_themes'] = {
+                video: self._detect_video_theme(video) for video in self.media['videos']
+            }
             
             self.last_update = time.time()
             logging.info("✅ Medios actualizados correctamente")
@@ -250,7 +252,18 @@ def start_stream():
             time.sleep(60)
             content.load_media()
 
+def run_server():
+    port = int(os.environ.get('PORT', 10000))
+    serve(app, host='0.0.0.0', port=port)
+
 if __name__ == "__main__":
     import threading
-    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=10000)).start()
+    
+    # Iniciar servidor web en segundo plano
+    server_thread = threading.Thread(target=run_server)
+    server_thread.daemon = True
+    server_thread.start()
+    
+    # Iniciar streaming después de 5 segundos
+    time.sleep(5)
     start_stream()
