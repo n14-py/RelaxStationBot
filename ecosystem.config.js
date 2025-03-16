@@ -1,16 +1,19 @@
 module.exports = {
   apps: [
     {
-      name: "stream-bot",
-      script: "python3 -u main.py",
-      watch: true,
-      ignore_watch: ["node_modules", "videos", "thumbs"],
+      name: "stream-core",
+      script: "start.sh",
+      autorestart: true,
+      watch: false
     },
     {
       name: "web-server",
       script: "server.js",
-      watch: true,
-      ignore_watch: ["node_modules"],
+      autorestart: true,
+      watch: false,
+      env: {
+        PORT: 10000
+      }
     }
   ]
-}
+};
