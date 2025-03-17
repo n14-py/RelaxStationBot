@@ -50,16 +50,20 @@ def autenticar_google_drive():
     creds = None
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            # Método headless para servidores
             flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
+            creds = flow.run_console()  # Cambio crucial aquí
+            
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
+    
     return build('drive', 'v3', credentials=creds)
-
+ 
 class ContentManager:
     def __init__(self):
         self.drive_service = autenticar_google_drive()
