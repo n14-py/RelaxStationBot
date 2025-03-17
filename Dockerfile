@@ -1,7 +1,12 @@
-FROM python:3.9-slim-buster
+# Usar versión estable de Debian
+FROM python:3.9-slim-bullseye
 
-# Instalar dependencias
-RUN apt-get update && apt-get install -y \
+# Instalar dependencias con mirrors confiables
+RUN echo "deb http://deb.debian.org/debian bullseye main" > /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian bullseye-updates main" >> /etc/apt/sources.list && \
+    echo "deb http://security.debian.org/debian-security bullseye-security main" >> /etc/apt/sources.list && \
+    apt-get update -o Acquire::Check-Valid-Until=false && \
+    apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
     unzip \
@@ -10,27 +15,19 @@ RUN apt-get update && apt-get install -y \
 # Instalar rclone
 RUN curl https://rclone.org/install.sh | bash
 
-# Crear estructura de carpetas
-RUN mkdir -p /media/{videos,sonidos,musica}
+# Copiar configuración
+COPY rclone.conf /root/.config/rclone/rclone.conf
+RUN chmod 600 /root/.config/rclone/rclone.conf
 
-# Copiar todo el proyecto
-COPY . .
-
-# Configurar rclone (usando tu archivo actualizado)
-RUN mkdir -p /root/.config/rclone && \
-    mv rclone.conf /root/.config/rclone/rclone.conf && \
-    chmod 600 /root/.config/rclone/rclone.conf
-
-# Sincronizar archivos durante el build
-RUN rclone copy --verbose gdrive_videos: /media/videos && \
-    rclone copy --verbose gdrive_sonidos: /media/sonidos && \
-    rclone copy --verbose gdrive_musica: /media/musica
+# Sincronizar archivos
+RUN mkdir -p /media/{videos,sonidos,musica} && \
+    rclone copy --verbose --progress gdrive_videos: /media/videos && \
+    rclone copy --verbose --progress gdrive_sonidos: /media/sonidos && \
+    rclone copy --verbose --progress gdrive_musica: /media/musica
 
 # Instalar dependencias Python
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Puerto expuesto
 EXPOSE 10000
 
-# Comando de inicio
-CMD python main.py
+CMD ["python", "main.py"]
