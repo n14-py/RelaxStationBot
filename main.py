@@ -194,7 +194,7 @@ def generar_titulo(video_name):
         partes = re.split(r'[_.-]', video_name)
         ubicacion = next(
             (p.capitalize() for p in partes 
-             if any(kw in p.lower() for kw in ['cabaña', 'bosque', 'rio', 'montaña']),
+             if any(kw in p.lower() for kw in ['cabana', 'bosque', 'rio', 'montana'])),
             "Naturaleza"
         )
         tema = next((t for t in THEME_KEYWORDS if t in video_name.lower()), 'relax')
