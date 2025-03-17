@@ -16,17 +16,17 @@ RUN mkdir -p /media/{videos,sonidos,musica}
 # Copiar todo el proyecto
 COPY . .
 
-# Configurar rclone
+# Configurar rclone (usando tu archivo actualizado)
 RUN mkdir -p /root/.config/rclone && \
     mv rclone.conf /root/.config/rclone/rclone.conf && \
     chmod 600 /root/.config/rclone/rclone.conf
 
-# Sincronizar archivos EN EL BUILD (no en runtime)
-RUN rclone copy --progress gdrive_videos: /media/videos && \
-    rclone copy --progress gdrive_sonidos: /media/sonidos && \
-    rclone copy --progress gdrive_musica: /media/musica
+# Sincronizar archivos durante el build
+RUN rclone copy --verbose gdrive_videos: /media/videos && \
+    rclone copy --verbose gdrive_sonidos: /media/sonidos && \
+    rclone copy --verbose gdrive_musica: /media/musica
 
-# Instalar dependencias
+# Instalar dependencias Python
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Puerto expuesto
