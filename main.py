@@ -160,8 +160,13 @@ def generar_titulo(video_path):
     try:
         nombre = os.path.basename(video_path)
         partes = re.split(r'[_.-]', nombre)
-        ubicacion = next((p.capitalize() for p in partes if any(kw in p.lower() 
-                        for kw in ['cabaña', 'bosque', 'rio', 'montaña']), "Ambiente")
+        # Corregido: Paréntesis bien cerrados
+        ubicacion = next(
+            (p.capitalize() for p in partes 
+             if any(kw in p.lower() 
+                    for kw in ['cabana', 'bosque', 'rio', 'montana'])),  # Eliminada 'ñ' por seguridad
+            "Ambiente"
+        )
                         
         tema = next((t for t in THEME_KEYWORDS if t in nombre.lower()), 'relax')
         return f"{ubicacion} • {tema.capitalize()} • Streaming 24/7"
