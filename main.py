@@ -59,8 +59,9 @@ class ContentManager:
     def load_media(self):
         try:
             # Cargar desde rclone
-            self.media['videos'] = self._get_files(RCLONE_CONFIG['videos'], ('.mp4', '.mkv'))
-            self.media['jazz'] = self._get_files(RCLONE_CONFIG['musica'], ('.mp3',))
+            # Modifica las rutas en ContentManager
+            self.media['videos'] = self._get_files('/media/videos', ('.mp4', '.mkv'))
+            self.media['jazz'] = self._get_files('/media/musica', ('.mp3',))
             
             if not self.media['videos']:
                 raise Exception("No hay videos en Google Drive")
