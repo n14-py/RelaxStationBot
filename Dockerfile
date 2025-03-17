@@ -15,12 +15,13 @@ RUN echo "deb http://deb.debian.org/debian bullseye main" > /etc/apt/sources.lis
 # Instalar rclone
 RUN curl https://rclone.org/install.sh | bash
 
-# Copiar configuración
-COPY rclone.conf /root/.config/rclone/rclone.conf
-RUN chmod 600 /root/.config/rclone/rclone.conf
+# Copiar TODO el proyecto incluyendo requirements.txt
+COPY . .
 
-# Sincronizar archivos
-RUN mkdir -p /media/{videos,sonidos,musica} && \
+# Configurar permisos y sincronizar archivos
+RUN mkdir -p /root/.config/rclone && \
+    chmod 600 /root/.config/rclone/rclone.conf && \
+    mkdir -p /media/{videos,sonidos,musica} && \
     rclone copy --verbose --progress gdrive_videos: /media/videos && \
     rclone copy --verbose --progress gdrive_sonidos: /media/sonidos && \
     rclone copy --verbose --progress gdrive_musica: /media/musica
