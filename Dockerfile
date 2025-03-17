@@ -1,43 +1,36 @@
 FROM python:3.9-slim-buster
 
-# Instalar dependencias esenciales
+# Instalar dependencias
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     curl \
     unzip \
-    fuse3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar rclone (versión estable)
+# Instalar rclone
 RUN curl https://rclone.org/install.sh | bash
 
-# Configurar usuario y permisos
-RUN useradd -m appuser && \
-    mkdir -p /mnt/gdrive_{videos,sonidos,musica} && \
-    chown -R appuser:appuser /mnt /home/appuser
-
-WORKDIR /app
+# Crear estructura de carpetas
+RUN mkdir -p /media/{videos,sonidos,musica}
 
 # Copiar todo el proyecto
 COPY . .
 
-# Configurar rclone como usuario no-root
-RUN mkdir -p /home/appuser/.config/rclone && \
-    mv rclone.conf /home/appuser/.config/rclone/rclone.conf && \
-    chmod 600 /home/appuser/.config/rclone/rclone.conf && \
-    chown -R appuser:appuser /home/appuser
+# Configurar rclone
+RUN mkdir -p /root/.config/rclone && \
+    mv rclone.conf /root/.config/rclone/rclone.conf && \
+    chmod 600 /root/.config/rclone/rclone.conf
 
-# Variables críticas
-ENV RCLONE_CONFIG=/home/appuser/.config/rclone/rclone.conf
+# Sincronizar archivos EN EL BUILD (no en runtime)
+RUN rclone copy --progress gdrive_videos: /media/videos && \
+    rclone copy --progress gdrive_sonidos: /media/sonidos && \
+    rclone copy --progress gdrive_musica: /media/musica
 
-# Instalar dependencias Python
+# Instalar dependencias
 RUN pip install --no-cache-dir -r requirements.txt
 
-USER appuser
+# Puerto expuesto
+EXPOSE 10000
 
-# Comando de inicio optimizado
-CMD sh -c "rclone mount --daemon --vfs-cache-mode full gdrive_videos: /mnt/gdrive_videos && \
-          rclone mount --daemon --vfs-cache-mode full gdrive_sonidos: /mnt/gdrive_sonidos && \
-          rclone mount --daemon --vfs-cache-mode full gdrive_musica: /mnt/gdrive_musica && \
-          sleep 30 && \
-          python main.py"
+# Comando de inicio
+CMD python main.py
