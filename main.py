@@ -4,6 +4,7 @@ import random
 import subprocess
 import logging
 import time
+import json
 from datetime import datetime
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -11,7 +12,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from flask import Flask
 from waitress import serve
- 
+
 app = Flask(__name__)
 
 @app.route('/health')
@@ -47,23 +48,45 @@ THEME_KEYWORDS = {
 }
 
 def autenticar_google_drive():
+    with open('credentials.json') as f:
+        client_config = json.load(f)['web']
+    
     creds = None
     if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+        with open('token.json') as token:
+            token_data = json.load(token)
+            creds = Credentials(
+                token=token_data['access_token'],
+                refresh_token=token_data['refresh_token'],
+                client_id=client_config['client_id'],
+                client_secret=client_config['client_secret'],
+                token_uri=client_config['token_uri'],
+                scopes=SCOPES
+            )
     
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            # Método headless para servidores
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            creds = flow.run_console()  # Cambio crucial aquí
-            
+            flow = InstalledAppFlow.from_client_secrets_file(
+                'credentials.json',
+                SCOPES,
+                redirect_uri='urn:ietf:wg:oauth:2.0:oob'
+            )
+            auth_url, _ = flow.authorization_url(prompt='consent')
+            print(f"\n🔑 Autenticación requerida: {auth_url}\n")
+            code = input("Ingresa el código de autorización: ").strip()
+            creds = flow.fetch_token(code=code)
+        
         with open('token.json', 'w') as token:
-            token.write(creds.to_json())
+            json.dump({
+                'access_token': creds.token,
+                'refresh_token': creds.refresh_token,
+                'expiry_date': creds.expiry.timestamp() if creds.expiry else None
+            }, token)
     
     return build('drive', 'v3', credentials=creds)
- 
+
 class ContentManager:
     def __init__(self):
         self.drive_service = autenticar_google_drive()
@@ -182,7 +205,7 @@ class YouTubeManager:
                     "snippet": {
                         "title": title,
                         "description": "Transmisión 24/7 de sonidos naturales y relajantes",
-                        "categoryId": "22"  # Categoría: People & Blogs
+                        "categoryId": "22"
                     }
                 }
             ).execute()
@@ -226,13 +249,12 @@ def iniciar_stream():
     
     while True:
         try:
-            # Rotar fases cada 8 horas
             if (datetime.now() - inicio_fase).total_seconds() >= secuencia[fase_actual][1] * 3600:
                 fase_actual = (fase_actual + 1) % len(secuencia)
                 inicio_fase = datetime.now()
                 logging.info(f"🔄 Cambiando a fase: {secuencia[fase_actual][0].upper()}")
             
-            # Seleccionar medios
+            # Selección de medios
             tema = secuencia[fase_actual][0]
             video = random.choice(contenido.media['videos'])
             video_tema = contenido.media['video_themes'][video['url']]
@@ -275,13 +297,11 @@ def iniciar_stream():
                 RTMP_URL
             ]
             
-            logging.info(f"▶️ Iniciando transmisión {tema.upper()}\n"
-                        f"Video: {video['name']}\n"
-                        f"Audio: {audio['name'] if isinstance(audio, dict) else 'Combinado'}")
+            logging.info(f"▶️ Iniciando transmisión {tema.upper()}\nVideo: {video['name']}\nAudio: {audio['name'] if isinstance(audio, dict) else 'Combinado'}")
             
             proceso = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             
-            # Mantener proceso activo por 8 horas
+            # Mantener proceso activo 8 horas
             inicio = time.time()
             while time.time() - inicio < 28800:
                 time.sleep(10)
