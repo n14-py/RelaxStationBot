@@ -24,7 +24,7 @@ logging.basicConfig(
 
 # Configuración
 RTMP_URL = os.getenv("RTMP_URL")  # URL de YouTube
-MEDIOS_URL = "https://raw.githubusercontent.com/tu-usuario/repo/main/medios.json"
+MEDIOS_URL = "https://github.com/n14-py/RelaxStationBot/edit/master/medios.json"
 YOUTUBE_CREDS = {
     'client_id': os.getenv("YOUTUBE_CLIENT_ID"),
     'client_secret': os.getenv("YOUTUBE_CLIENT_SECRET"),
