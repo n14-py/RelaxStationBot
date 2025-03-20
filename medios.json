@@ -2,20 +2,19 @@
     "videos": [
         {
             "name": "Cabaña en el bosque lluvia.mp4",
-            "url": "https://drive.google.com/file/d/1OqXFw_hm8cjpYkibc7K0U5ZbdSssq82W/view?usp=drive_link"
-        },
-   
+            "url": "https://drive.google.com/uc?export=download&id=1OqXFw_hm8cjpYkibc7K0U5ZbdSssq82W"
+        }
     ],
     "musica": [
         {
-            "name": "Jazz1.mp3",
-            "url": "https://drive.google.com/file/d/1EQRoJyZBFCmykp0gFCtCsm5XXq5-GRmh/view?usp=sharing"
+            "name": "Jazz relajante noche.mp3",
+            "url": "https://drive.google.com/uc?export=download&id=1EQRoJyZBFCmykp0gFCtCsm5XXq5-GRmh"
         }
     ],
     "sonidos_naturaleza": [
         {
-            "name": "LLuvialoop.mp3",
-            "url": "https://drive.google.com/file/d/1zBwrzRramM9jYSf9SoT-SVTZoo6LYmbG/view?usp=drive_link"
+            "name": "LLuvia tropical loop.mp3",
+            "url": "https://drive.google.com/uc?export=download&id=1zBwrzRramM9jYSf9SoT-SVTZoo6LYmbG"
         }
     ]
 }
