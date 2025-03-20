@@ -5,23 +5,15 @@ import subprocess
 import logging
 import time
 import json
-import warnings
+import requests
 from datetime import datetime
 from googleapiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from flask import Flask
 from waitress import serve
 
-# Configurar warnings
-warnings.filterwarnings("ignore", message="file_cache is only supported with oauth2client<4.0.0")
-
 app = Flask(__name__)
-
-@app.route('/health')
-def health_check():
-    return "OK", 200
 
 # Configuración logging
 logging.basicConfig(
@@ -30,145 +22,48 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 
-# ========== CONFIGURACIÓN GOOGLE DRIVE ==========
-CARPETA_VIDEOS = '1uLrhXne1gAS26iuykRbfQJvCga9ND3K9' 
-CARPETA_SONIDOS = '1cbP-K-jTDh2J_jGJL4cDKNte6f8OIC6q'
-CARPETA_MUSICA = '1xVXZAbgLSMtCY48jNT99XFQG2Pb_5gt9'
-SCOPES_DRIVE = [
-    'https://www.googleapis.com/auth/drive.readonly',
-    'https://www.googleapis.com/auth/drive.metadata.readonly'
-]
-
-# ========== CONFIGURACIÓN YOUTUBE ==========
-RTMP_URL = "rtmp://a.rtmp.youtube.com/live2/tumy-gch3-dx73-cg5r-20dy"
-SCOPES_YOUTUBE = ['https://www.googleapis.com/auth/youtube']
+# Configuración
+RTMP_URL = os.getenv("RTMP_URL")  # URL de YouTube
+MEDIOS_URL = "https://raw.githubusercontent.com/tu-usuario/repo/main/medios.json"
 YOUTUBE_CREDS = {
-    'client_id': '913486235878-8f86jgtuccrrcaai3456jab4ujbpan5s.apps.googleusercontent.com',
-    'client_secret': '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',
-    'refresh_token': '1//0hkLzswQpTRr3CgYIARAAGBESNwF-L9Ir8J2Bfhvmvgcw2RgCBi2LdNBd1DrEKJQCQoY8lj_sny5JfoUfgIe9MMcrpyHhvDfcOhk'
+    'client_id': os.getenv("YOUTUBE_CLIENT_ID"),
+    'client_secret': os.getenv("YOUTUBE_CLIENT_SECRET"),
+    'refresh_token': os.getenv("YOUTUBE_REFRESH_TOKEN")
 }
 
-# Palabras clave para categorización
-THEME_KEYWORDS = {
-    'lluvia': ['lluvia', 'rain', 'chuva'],
-    'fuego': ['fuego', 'fire', 'fogata'],
-    'bosque': ['bosque', 'jungla', 'forest']
+# Palabras clave para títulos
+PALABRAS_CLAVE = {
+    'lluvia': ['lluvia', 'rain', 'storm'],
+    'fuego': ['fuego', 'fire', 'chimenea'],
+    'bosque': ['bosque', 'jungla', 'forest'],
+    'rio': ['rio', 'river', 'cascada'],
+    'noche': ['noche', 'night', 'luna']
 }
 
-# ========== AUTENTICACIÓN GOOGLE DRIVE ==========
-def autenticar_google_drive():
-    try:
-        with open('credentials.json') as f:
-            client_config = json.load(f)['web']
-        
-        creds = None
-        if os.path.exists('token.json'):
-            with open('token.json') as token:
-                token_data = json.load(token)
-                creds = Credentials(
-                    token=token_data['access_token'],
-                    refresh_token=token_data['refresh_token'],
-                    client_id=client_config['client_id'],
-                    client_secret=client_config['client_secret'],
-                    token_uri=client_config['token_uri'],
-                    scopes=SCOPES_DRIVE
-                )
-        
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    'credentials.json',
-                    SCOPES_DRIVE,
-                    redirect_uri=client_config['redirect_uris'][0]
-                )
-                auth_url, _ = flow.authorization_url(prompt='consent')
-                print(f"\n🔑 AUTENTICACIÓN REQUERIDA 🔑\nVisita esta URL:\n{auth_url}\n")
-                code = input("Ingresa el código de autorización: ").strip()
-                creds = flow.fetch_token(code=code)
-            
-            with open('token.json', 'w') as token:
-                json.dump({
-                    'access_token': creds.token,
-                    'refresh_token': creds.refresh_token,
-                    'expiry_date': creds.expiry.timestamp() if creds.expiry else None
-                }, token)
-        
-        return build('drive', 'v3', credentials=creds)
-    
-    except Exception as e:
-        logging.error(f"🔥 Error fatal en autenticación Drive: {str(e)}")
-        raise
-
-# ========== GESTIÓN DE CONTENIDO ==========
-class ContentManager:
+class GestorContenido:
     def __init__(self):
-        self.drive_service = autenticar_google_drive()
-        self.media = {'videos': [], 'jazz': [], 'sonidos': {}}
-        self.load_media()
-
-    def listar_archivos(self, folder_id):
+        self.medios = self.cargar_medios()
+    
+    def cargar_medios(self):
         try:
-            results = self.drive_service.files().list(
-                q=f"'{folder_id}' in parents and trashed = false",
-                fields="files(id, name, mimeType)",
-                pageSize=1000
-            ).execute()
-            return results.get('files', [])
+            respuesta = requests.get(MEDIOS_URL)
+            return respuesta.json()
         except Exception as e:
-            logging.error(f"📂 Error listando archivos: {str(e)}")
-            return []
+            logging.error(f"Error cargando medios: {str(e)}")
+            return {
+                'videos': [],
+                'musica': [],
+                'sonidos_naturaleza': []
+            }
+    
+    def actualizar_medios(self):
+        self.medios = self.cargar_medios()
 
-    def cargar_multimedia(self, folder_id, extensiones):
-        try:
-            return [
-                {
-                    'name': f['name'],
-                    'url': f"https://drive.google.com/uc?export=download&id={f['id']}"
-                } for f in self.listar_archivos(folder_id)
-                if f['name'].lower().endswith(tuple(extensiones))
-            ]
-        except Exception as e:
-            logging.error(f"🎵 Error cargando multimedia: {str(e)}")
-            return []
-
-    def load_media(self):
-        try:
-            # Cargar videos (MP4/MKV)
-            self.media['videos'] = self.cargar_multimedia(CARPETA_VIDEOS, ['.mp4', '.mkv'])
-            if not self.media['videos']:
-                raise ValueError("🚫 No se encontraron videos en la carpeta especificada")
-            
-            # Cargar música (MP3/WAV)
-            self.media['jazz'] = self.cargar_multimedia(CARPETA_MUSICA, ['.mp3', '.wav'])
-            if not self.media['jazz']:
-                raise ValueError("🎷 No se encontró música jazz")
-            
-            # Cargar y clasificar sonidos
-            sonidos_brutos = self.cargar_multimedia(CARPETA_SONIDOS, ['.mp3', '.wav'])
-            self.media['sonidos'] = {tema: [] for tema in THEME_KEYWORDS}
-            self.media['sonidos']['otros'] = []
-            
-            for sonido in sonidos_brutos:
-                nombre = sonido['name'].lower()
-                tema = next((t for t, keys in THEME_KEYWORDS.items() if any(k in nombre for k in keys)), 'otros')
-                self.media['sonidos'][tema].append(sonido)
-            
-            logging.info("✅ Medios cargados correctamente")
-            return True
-            
-        except Exception as e:
-            logging.error(f"❌ Error crítico: {str(e)}")
-            return False
-
-# ========== GESTIÓN YOUTUBE ==========
 class YouTubeManager:
     def __init__(self):
-        self.youtube = None
-        self.authenticate()
-
-    def authenticate(self):
+        self.youtube = self.autenticar()
+    
+    def autenticar(self):
         try:
             creds = Credentials(
                 token=None,
@@ -176,100 +71,122 @@ class YouTubeManager:
                 client_id=YOUTUBE_CREDS['client_id'],
                 client_secret=YOUTUBE_CREDS['client_secret'],
                 token_uri="https://oauth2.googleapis.com/token",
-                scopes=SCOPES_YOUTUBE
+                scopes=['https://www.googleapis.com/auth/youtube']
             )
             creds.refresh(Request())
-            self.youtube = build('youtube', 'v3', credentials=creds)
-            logging.info("✅ Autenticación YouTube exitosa")
-            return True
+            return build('youtube', 'v3', credentials=creds)
         except Exception as e:
-            logging.error(f"❌ Fallo en autenticación YouTube: {str(e)}")
-            return False
-
-    def actualizar_transmision(self, titulo):
+            logging.error(f"Error autenticación YouTube: {str(e)}")
+            return None
+    
+    def generar_miniatura(self, video_url):
+        # Extraer primer frame del video
         try:
+            output_path = "/tmp/miniatura.jpg"
+            subprocess.run([
+                "ffmpeg",
+                "-y",
+                "-ss", "00:00:01",
+                "-i", video_url,
+                "-vframes", "1",
+                "-q:v", "2",
+                output_path
+            ], check=True)
+            return output_path
+        except Exception as e:
+            logging.error(f"Error generando miniatura: {str(e)}")
+            return None
+    
+    def actualizar_transmision(self, titulo, video_url):
+        try:
+            # Generar miniatura
+            thumbnail_path = self.generar_miniatura(video_url)
+            
+            # Obtener transmisión activa
             broadcasts = self.youtube.liveBroadcasts().list(
-                part="snippet,status",
+                part="id,snippet,status",
                 broadcastStatus="active"
             ).execute()
             
             if not broadcasts.get('items'):
-                logging.error("⚠️ Primero crea una transmisión ACTIVA en YouTube Studio")
-                return False
-                
+                logging.error("¡Crea una transmisión ACTIVA en YouTube Studio primero!")
+                return
+            
             broadcast_id = broadcasts['items'][0]['id']
             
+            # Actualizar título
             self.youtube.liveBroadcasts().update(
                 part="snippet",
                 body={
                     "id": broadcast_id,
                     "snippet": {
                         "title": titulo,
-                        "description": "Streaming 24/7 de sonidos naturales • Relájate con nosotros",
+                        "description": "Streaming 24/7 - Sonidos Naturales y Música Relajante",
                         "categoryId": "22"
                     }
                 }
             ).execute()
             
-            logging.info(f"📺 Título actualizado: {titulo}")
-            return True
+            # Actualizar miniatura
+            if thumbnail_path:
+                self.youtube.thumbnails().set(
+                    videoId=broadcast_id,
+                    media_body=thumbnail_path
+                ).execute()
+                os.remove(thumbnail_path)
+            
+            logging.info(f"Actualizado YouTube: {titulo}")
+            
         except Exception as e:
-            logging.error(f"❌ Error actualizando transmisión: {str(e)}")
-            return False
+            logging.error(f"Error actualizando YouTube: {str(e)}")
 
-# ========== FUNCIONES PRINCIPALES ==========
 def generar_titulo(nombre_video):
-    try:
-        palabras = re.split(r'[_\-\s.]+', nombre_video)
-        ubicacion = next((p.capitalize() for p in palabras if any(kw in p.lower() for kw in ['bosque', 'rio', 'montaña'])), "Naturaleza")
-        tema = next((t for t in THEME_KEYWORDS if t in nombre_video.lower()), 'relax')
-        return f"{ubicacion} • Sonidos de {tema.capitalize()} • 24/7"
-    except:
-        return "Sonidos Naturales en Vivo 🌿✨"
+    nombre = nombre_video.lower()
+    tema = next((t for t, keys in PALABRAS_CLAVE.items() if any(k in nombre for k in keys)), 'Naturaleza')
+    ubicacion = next((p for p in ['Cabaña', 'Sala', 'Cueva', 'Montaña'] if p.lower() in nombre), 'Entorno')
+    return f"{ubicacion} • Sonidos de {tema.capitalize()} 🌿 24/7"
 
 def ciclo_transmision():
-    contenido = ContentManager()
+    gestor = GestorContenido()
     youtube = YouTubeManager()
-    
-    if not contenido.media['videos'] or not youtube.youtube:
-        return
-    
-    secuencias = [('jazz', 2), ('naturaleza', 2), ('combinado', 2)]  # 2 horas cada fase para pruebas
-    fase_actual = 0
-    inicio_fase = datetime.now()
+    fase = 0  # 0=música, 1=naturaleza, 2=combinado
+    tiempo_inicio = datetime.now()
     
     while True:
         try:
-            # Rotación de fases
-            tiempo_transcurrido = (datetime.now() - inicio_fase).total_seconds()
-            if tiempo_transcurrido >= secuencias[fase_actual][1] * 3600:
-                fase_actual = (fase_actual + 1) % len(secuencias)
-                inicio_fase = datetime.now()
-                logging.info(f"🔄 Cambiando a fase: {secuencias[fase_actual][0].upper()}")
+            # Rotar cada 8 horas
+            if (datetime.now() - tiempo_inicio).total_seconds() >= 28800:
+                fase = (fase + 1) % 3
+                tiempo_inicio = datetime.now()
+                gestor.actualizar_medios()
+                logging.info(f"🔄 Rotando a fase: {['Música', 'Naturaleza', 'Combinado'][fase]}")
             
-            # Selección de contenido
-            fase = secuencias[fase_actual][0]
-            video = random.choice(contenido.media['videos'])
-            
-            if fase == 'naturaleza':
-                audio = random.choice(contenido.media['sonidos'].get('bosque', []) + contenido.media['sonidos'].get('lluvia', []))
-            elif fase == 'jazz':
-                audio = random.choice(contenido.media['jazz'])
+            # Seleccionar contenido
+            if fase == 0:
+                video = random.choice(gestor.medios['videos'])
+                audio = random.choice(gestor.medios['musica'])
+            elif fase == 1:
+                video = random.choice(gestor.medios['videos'])
+                audio = random.choice(gestor.medios['sonidos_naturaleza'])
             else:
-                audio = f"concat:{random.choice(contenido.media['jazz'])['url']}|{random.choice(contenido.media['sonidos']['bosque'])['url']}"
+                video = random.choice(gestor.medios['videos'])
+                audio = random.choice(gestor.medios['musica'] + gestor.medios['sonidos_naturaleza'])
+            
+            # Generar título automático
+            titulo = generar_titulo(video['name'])
             
             # Actualizar YouTube
-            titulo = generar_titulo(video['name'])
-            youtube.actualizar_transmision(titulo)
+            if youtube.youtube:
+                youtube.actualizar_transmision(titulo, video['url'])
             
             # Iniciar FFmpeg
-            comando = [
+            cmd = [
                 "ffmpeg",
                 "-loglevel", "error",
                 "-re",
                 "-stream_loop", "-1",
                 "-i", video['url'],
-                "-i", audio['url'] if isinstance(audio, dict) else audio,
+                "-i", audio['url'],
                 "-map", "0:v:0",
                 "-map", "1:a:0",
                 "-c:v", "libx264",
@@ -287,25 +204,21 @@ def ciclo_transmision():
                 RTMP_URL
             ]
             
-            logging.info(f"\n🎬 Iniciando {fase.upper()}:\nVideo: {video['name']}\nAudio: {audio['name'] if isinstance(audio, dict) else 'Mix'}")
+            logging.info(f"▶️ Iniciando transmisión:\nVideo: {video['name']}\nAudio: {audio['name']}")
             
-            proceso = subprocess.Popen(comando)
-            
-            # Mantener transmisión por tiempo de fase
-            time.sleep(secuencias[fase_actual][1] * 3600)
+            proceso = subprocess.Popen(cmd)
+            time.sleep(28800)  # 8 horas
             proceso.terminate()
-            logging.info("⏭️ Transición a siguiente fase...")
             
         except Exception as e:
-            logging.error(f"🔥 Error en ciclo de transmisión: {str(e)}")
+            logging.error(f"Error en transmisión: {str(e)}")
             time.sleep(60)
 
-def ejecutar_servidor():
-    port = int(os.environ.get('PORT', 10000))
-    serve(app, host='0.0.0.0', port=port)
+@app.route('/health')
+def health_check():
+    return "OK", 200
 
 if __name__ == "__main__":
     import threading
-    threading.Thread(target=ejecutar_servidor, daemon=True).start()
-    time.sleep(2)
-    ciclo_transmision()
+    threading.Thread(target=ciclo_transmision, daemon=True).start()
+    serve(app, host='0.0.0.0', port=10000)
