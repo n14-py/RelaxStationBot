@@ -5,6 +5,7 @@ import subprocess
 import logging
 import time
 import json
+import warnings
 from datetime import datetime
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -12,6 +13,9 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from flask import Flask
 from waitress import serve
+
+# Ignorar advertencias específicas de file_cache
+warnings.filterwarnings("ignore", message="file_cache is only supported with oauth2client<4.0.0")
 
 app = Flask(__name__)
 
@@ -120,6 +124,10 @@ class ContentManager:
                     })
             self.media['videos'] = videos
             
+            # Verificar videos
+            if not self.media['videos']:
+                raise ValueError("No se encontraron videos en Google Drive")
+            
             # Cargar música jazz
             jazz = []
             for file in self.listar_archivos(CARPETA_MUSICA):
@@ -129,6 +137,10 @@ class ContentManager:
                         'url': self.generar_url(file['id'])
                     })
             self.media['jazz'] = jazz
+            
+            # Verificar música
+            if not self.media['jazz']:
+                raise ValueError("No se encontró música jazz")
             
             # Cargar y clasificar sonidos
             self.media['sonidos'] = {theme: [] for theme in THEME_KEYWORDS}
@@ -193,10 +205,14 @@ class YouTubeManager:
             ).execute()
             
             if not broadcasts.get('items'):
-                logging.error("⚠️ No hay transmisiones activas en YouTube")
+                logging.error("⚠️ Primero crea una transmisión ACTIVA en YouTube Studio")
                 return False
                 
-            broadcast_id = broadcasts['items'][0]['id']
+            try:
+                broadcast_id = broadcasts['items'][0]['id']
+            except (IndexError, KeyError):
+                logging.error("❌ No se pudo obtener ID de transmisión")
+                return False
             
             self.youtube.liveBroadcasts().update(
                 part="snippet",
@@ -249,24 +265,40 @@ def iniciar_stream():
     
     while True:
         try:
+            # Rotar fases cada 8 horas
             if (datetime.now() - inicio_fase).total_seconds() >= secuencia[fase_actual][1] * 3600:
                 fase_actual = (fase_actual + 1) % len(secuencia)
                 inicio_fase = datetime.now()
                 logging.info(f"🔄 Cambiando a fase: {secuencia[fase_actual][0].upper()}")
+            
+            # Verificar contenido disponible
+            if not contenido.media['videos']:
+                logging.error("🚫 No hay videos disponibles")
+                time.sleep(60)
+                continue
+                
+            if not contenido.media['jazz']:
+                logging.error("🚫 No hay música disponible")
+                time.sleep(60)
+                continue
             
             # Selección de medios
             tema = secuencia[fase_actual][0]
             video = random.choice(contenido.media['videos'])
             video_tema = contenido.media['video_themes'][video['url']]
             
-            if tema == 'naturaleza':
-                audio = random.choice(contenido.media['sonidos'].get(video_tema, []))
-            elif tema == 'jazz':
-                audio = random.choice(contenido.media['jazz'])
-            else:
-                audio_jazz = random.choice(contenido.media['jazz'])
-                audio_naturaleza = random.choice(contenido.media['sonidos'].get(video_tema, []))
-                audio = f"concat:{audio_jazz['url']}|{audio_naturaleza['url']}"
+            try:
+                if tema == 'naturaleza':
+                    audio = random.choice(contenido.media['sonidos'].get(video_tema, []))
+                elif tema == 'jazz':
+                    audio = random.choice(contenido.media['jazz'])
+                else:
+                    audio_jazz = random.choice(contenido.media['jazz'])
+                    audio_naturaleza = random.choice(contenido.media['sonidos'].get(video_tema, []))
+                    audio = f"concat:{audio_jazz['url']}|{audio_naturaleza['url']}"
+            except IndexError:
+                logging.error("🚫 No hay contenido para esta categoría")
+                continue
             
             # Actualizar YouTube
             titulo = generar_titulo(video['name'])
@@ -303,7 +335,7 @@ def iniciar_stream():
             
             # Mantener proceso activo 8 horas
             inicio = time.time()
-            while time.time() - inicio < 28800:
+            while time.time() - inicio < 28800:  # 8 horas
                 time.sleep(10)
                 
             proceso.terminate()
