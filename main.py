@@ -24,7 +24,7 @@ logging.basicConfig(
 
 # Configuración
 RTMP_URL = os.getenv("RTMP_URL")  # URL de YouTube
-MEDIOS_URL = "https://github.com/n14-py/RelaxStationBot/edit/master/medios.json"
+MEDIOS_URL = "https://raw.githubusercontent.com/n14-py/RelaxStationBot/master/medios.json"
 YOUTUBE_CREDS = {
     'client_id': os.getenv("YOUTUBE_CLIENT_ID"),
     'client_secret': os.getenv("YOUTUBE_CLIENT_SECRET"),
@@ -45,21 +45,20 @@ class GestorContenido:
         self.medios = self.cargar_medios()
     
     def cargar_medios(self):
-    try:
-        respuesta = requests.get(MEDIOS_URL, timeout=10)
-        respuesta.raise_for_status()
-        datos = respuesta.json()
-        
-        # Validar estructura
-        if not all(key in datos for key in ["videos", "musica", "sonidos_naturaleza"]):
-            raise ValueError("Estructura JSON inválida")
+        try:  # <- ¡Faltaba indentación aquí!
+            respuesta = requests.get(MEDIOS_URL, timeout=10)
+            respuesta.raise_for_status()
+            datos = respuesta.json()
             
-        logging.info("✅ Medios cargados correctamente")
-        return datos
-        
-    except Exception as e:
-        logging.error(f"🚨 Error crítico: {str(e)}")
-        return {"videos": [], "musica": [], "sonidos_naturaleza": []}
+            if not all(key in datos for key in ["videos", "musica", "sonidos_naturaleza"]):
+                raise ValueError("Estructura JSON inválida")
+                
+            logging.info("✅ Medios cargados correctamente")
+            return datos
+            
+        except Exception as e:
+            logging.error(f"🚨 Error crítico: {str(e)}")
+            return {"videos": [], "musica": [], "sonidos_naturaleza": []}
     
     def actualizar_medios(self):
         self.medios = self.cargar_medios()
