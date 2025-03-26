@@ -96,7 +96,6 @@ class GestorContenido:
             }
             
             for categoria in ['videos', 'musica', 'sonidos_naturaleza']:
-                datos[categoria] = [m for m in datos[categoria] 
                 for medio in datos[categoria]:
                     ext = os.path.splitext(medio['url'])[1].lower()
                     if ext not in valid_extensions[categoria]:
@@ -242,7 +241,9 @@ def ciclo_transmision():
             else:
                 naturaleza = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
                 musica = [a for a in gestor.medios['musica'] if a['local_path']]
-                audios = (random.choice(naturaleza), musica
+                if not naturaleza or not musica:
+                    raise ValueError("Faltan archivos para fase combinada")
+                audios = (random.choice(naturaleza), musica)
             
             if not audios:
                 logging.error("No hay audios disponibles")
@@ -277,7 +278,7 @@ def ciclo_transmision():
                 "-c:a", "aac",
                 "-b:a", "160k",
                 "-ar", "48000",
-                "-t", "28800",  # 8 horas
+                "-t", "28800",
                 "-f", "flv",
                 RTMP_URL
             ]
@@ -325,7 +326,7 @@ def ciclo_transmision():
             
             logging.info("🚀 Iniciando transmisión...")
             proceso = subprocess.Popen(cmd)
-            time.sleep(30)  # Esperar conexión
+            time.sleep(30)
             
             if proceso.poll() is None:
                 logging.info("🔴 Stream activo")
