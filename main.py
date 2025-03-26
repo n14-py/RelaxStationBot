@@ -7,6 +7,7 @@ import time
 import json
 import requests
 import tempfile
+import threading
 from datetime import datetime
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
@@ -221,11 +222,23 @@ def descargar_y_transmitir(video_url, audio_url):
             logging.info("⬇️ Descargando audio...")
             if not DescargadorDrive.descargar_archivo(audio_url, audio_path):
                 return None
-                
-            # Iniciar transmisión
+
+            # Verificar codecs del video
+            probe_cmd = [
+                "ffprobe",
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name,width,height,pix_fmt",
+                "-of", "json",
+                video_path
+            ]
+            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+            logging.info(f"🔍 Metadata video:\n{probe_result.stdout}")
+
+            # Iniciar transmisión con logs detallados
             cmd = [
                 "ffmpeg",
-                "-loglevel", "error",
+                "-loglevel", "debug",
                 "-re",
                 "-stream_loop", "-1",
                 "-i", video_path,
@@ -246,7 +259,24 @@ def descargar_y_transmitir(video_url, audio_url):
                 "-f", "flv",
                 RTMP_URL
             ]
-            proceso = subprocess.Popen(cmd, stderr=subprocess.PIPE)
+            
+            proceso = subprocess.Popen(
+                cmd, 
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            
+            # Hilo para monitorear logs de FFmpeg
+            def log_stream():
+                while True:
+                    output = proceso.stderr.readline()
+                    if output == '' and proceso.poll() is not None:
+                        break
+                    if output:
+                        logging.info(f"FFMPEG: {output.strip()}")
+            
+            threading.Thread(target=log_stream, daemon=True).start()
+            
             logging.info("🎥 Transmisión iniciada")
             return proceso
             
@@ -300,7 +330,7 @@ def ciclo_transmision():
                 
             # Esperar 10 minutos antes de actualizar
             logging.info("⏳ Esperando 10 minutos para actualizar YouTube...")
-            time.sleep(600)  # 10 minutos = 600 segundos
+            time.sleep(600)
             
             # Actualizar YouTube con nueva descarga
             if youtube.youtube:
@@ -310,7 +340,7 @@ def ciclo_transmision():
                         youtube.actualizar_transmision(titulo, video_path)
             
             # Mantener transmisión por 7h50m restantes
-            tiempo_restante = 28800 - 600  # 7 horas 50 minutos
+            tiempo_restante = 28800 - 600
             time.sleep(tiempo_restante)
             proceso.terminate()
             
@@ -325,6 +355,5 @@ def health_check():
     return "OK", 200
 
 if __name__ == "__main__":
-    import threading
     threading.Thread(target=ciclo_transmision, daemon=True).start()
     serve(app, host='0.0.0.0', port=10000)
