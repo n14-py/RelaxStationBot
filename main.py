@@ -57,47 +57,46 @@ class GestorContenido:
             return url
     
     def descargar_archivo(self, url):
-        try:
-            url_real = self.obtener_url_real(url)
-            nombre_hash = hashlib.md5(url.encode()).hexdigest()
-            ruta_base = os.path.join(self.media_cache_dir, nombre_hash)
+    try:
+        # Obtener ID real de Google Drive
+        if 'drive.google.com' in url:
+            file_id = url.split('id=')[-1].split('&')[0]
+            url = f"https://drive.google.com/uc?export=download&id={file_id}"
+
+        session = requests.Session()
+        response = session.get(url, stream=True, timeout=30)
+        
+        # Manejar confirmación de descarga grande
+        if 'drive.google.com' in url and 'confirm=' not in url:
+            for key, value in response.cookies.items():
+                if key.startswith('download_warning'):
+                    confirm_url = f"{url}&confirm={value}"
+                    response = session.get(confirm_url, stream=True, timeout=30)
+                    break
+        
+        # Determinar extensión real
+        content_disposition = response.headers.get('Content-Disposition', '')
+        filename = re.findall('filename="(.+)"', content_disposition)
+        extension = os.path.splitext(filename[0])[1] if filename else '.mp4'
+        
+        nombre_hash = hashlib.md5(url.encode()).hexdigest()
+        ruta_local = os.path.join(self.media_cache_dir, f"{nombre_hash}{extension}")
+        
+        # Descargar archivo completo
+        with open(ruta_local, 'wb') as f:
+            total_size = 0
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    total_size += len(chunk)
+                    f.write(chunk)
             
-            # Verificar si ya existe una versión válida
-            for ext in ['.mp4', '.mp3', '.mkv', '.mov']:
-                if os.path.exists(ruta_base + ext):
-                    return ruta_base + ext
-            
-            session = requests.Session()
-            response = session.get(url_real, stream=True, timeout=30)
-            
-            # Manejar confirmación de descarga en Google Drive
-            if 'drive.google.com' in url_real and 'confirm=' not in url_real:
-                for key, value in response.cookies.items():
-                    if key.startswith('download_warning'):
-                        url_real += f"&confirm={value}"
-                        response = session.get(url_real, stream=True, timeout=30)
-                        break
-            
-            # Determinar extensión
-            content_type = response.headers.get('Content-Type', '')
-            extension = self.determinar_extension(content_type, url_real)
-            ruta_local = ruta_base + extension
-            
-            # Descargar archivo
-            with open(ruta_local, 'wb') as f:
-                total_size = 0
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        total_size += len(chunk)
-                        f.write(chunk)
-                
-                if total_size < 1024 * 1024:  # Menos de 1MB = probable error
-                    raise ValueError("Archivo demasiado pequeño")
-            
-            return ruta_local
-        except Exception as e:
-            logging.error(f"Error descarga {url}: {str(e)}")
-            return None
+            if total_size < 5 * 1024 * 1024:  # Mínimo 5MB
+                raise ValueError("Archivo demasiado pequeño")
+        
+        return ruta_local
+    except Exception as e:
+        logging.error(f"Error descarga {url}: {str(e)}")
+        return None
     
     def determinar_extension(self, content_type, url):
         extensiones = {
