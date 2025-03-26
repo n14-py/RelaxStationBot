@@ -6,6 +6,7 @@ import logging
 import time
 import json
 import requests
+import tempfile
 from datetime import datetime
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
@@ -23,7 +24,7 @@ logging.basicConfig(
 )
 
 # Configuración
-RTMP_URL = os.getenv("RTMP_URL")  # URL de YouTube
+RTMP_URL = os.getenv("RTMP_URL")
 MEDIOS_URL = "https://raw.githubusercontent.com/n14-py/RelaxStationBot/master/medios.json"
 YOUTUBE_CREDS = {
     'client_id': os.getenv("YOUTUBE_CLIENT_ID"),
@@ -31,7 +32,9 @@ YOUTUBE_CREDS = {
     'refresh_token': os.getenv("YOUTUBE_REFRESH_TOKEN")
 }
 
-# Palabras clave para títulos
+# Directorio temporal
+TEMP_DIR = tempfile.gettempdir()
+
 PALABRAS_CLAVE = {
     'lluvia': ['lluvia', 'rain', 'storm'],
     'fuego': ['fuego', 'fire', 'chimenea'],
@@ -39,6 +42,29 @@ PALABRAS_CLAVE = {
     'rio': ['rio', 'river', 'cascada'],
     'noche': ['noche', 'night', 'luna']
 }
+
+class DescargadorDrive:
+    @staticmethod
+    def descargar_archivo(url, destino):
+        try:
+            # Usar wget para manejar cookies y redirecciones
+            comando = [
+                "wget",
+                "--no-check-certificate",
+                "-O", destino,
+                url
+            ]
+            result = subprocess.run(comando, capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                logging.error(f"Error descarga: {result.stderr}")
+                return False
+                
+            return os.path.exists(destino)
+            
+        except Exception as e:
+            logging.error(f"Error descargando {url}: {str(e)}")
+            return False
 
 class GestorContenido:
     def __init__(self):
@@ -48,16 +74,9 @@ class GestorContenido:
         try:
             respuesta = requests.get(MEDIOS_URL, timeout=15)
             respuesta.raise_for_status()
-            datos = respuesta.json()
-            
-            if not all(key in datos for key in ["videos", "musica", "sonidos_naturaleza"]):
-                raise ValueError("Estructura JSON inválida")
-                
-            logging.info("✅ Medios cargados correctamente")
-            return datos
-            
+            return respuesta.json()
         except Exception as e:
-            logging.error(f"🚨 Error crítico: {str(e)}")
+            logging.error(f"Error cargando medios: {str(e)}")
             return {"videos": [], "musica": [], "sonidos_naturaleza": []}
     
     def actualizar_medios(self):
@@ -83,32 +102,24 @@ class YouTubeManager:
             logging.error(f"Error autenticación YouTube: {str(e)}")
             return None
     
-    def generar_miniatura(self, video_url):
+    def generar_miniatura(self, video_path):
         try:
-            output_path = "/tmp/miniatura.jpg"
-            result = subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-ss", "00:00:01",
-                    "-i", video_url,
-                    "-vframes", "1",
-                    "-q:v", "2",
-                    output_path
-                ],
-                stderr=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                timeout=15
-            )
-            if result.returncode != 0:
-                logging.error(f"Error FFmpeg: {result.stderr.decode()}")
-                return None
+            output_path = os.path.join(TEMP_DIR, "miniatura.jpg")
+            subprocess.run([
+                "ffmpeg",
+                "-y",
+                "-ss", "00:00:05",
+                "-i", video_path,
+                "-vframes", "1",
+                "-q:v", "2",
+                output_path
+            ], check=True)
             return output_path
         except Exception as e:
-            logging.error(f"Error generando miniatura: {str(e)}")
+            logging.error(f"Error miniatura: {str(e)}")
             return None
     
-    def actualizar_transmision(self, titulo, video_url):
+    def actualizar_transmision(self, titulo, video_path):
         try:
             if not self.youtube:
                 return
@@ -119,12 +130,12 @@ class YouTubeManager:
             ).execute()
             
             if not broadcasts.get('items'):
-                logging.error("¡No hay transmisión activa en YouTube!")
+                logging.error("Crea una transmisión ACTIVA en YouTube Studio primero!")
                 return
             
             broadcast_id = broadcasts['items'][0]['id']
             
-            # Actualizar título primero
+            # Actualizar título
             self.youtube.liveBroadcasts().update(
                 part="snippet",
                 body={
@@ -137,8 +148,8 @@ class YouTubeManager:
                 }
             ).execute()
             
-            # Intentar miniatura después
-            thumbnail_path = self.generar_miniatura(video_url)
+            # Actualizar miniatura
+            thumbnail_path = self.generar_miniatura(video_path)
             if thumbnail_path:
                 self.youtube.thumbnails().set(
                     videoId=broadcast_id,
@@ -149,7 +160,7 @@ class YouTubeManager:
             logging.info(f"Actualizado YouTube: {titulo}")
             
         except Exception as e:
-            logging.error(f"Error actualizando YouTube: {str(e)}")
+            logging.error(f"Error YouTube API: {str(e)}")
 
 def generar_titulo(nombre_video):
     nombre = nombre_video.lower()
@@ -157,31 +168,55 @@ def generar_titulo(nombre_video):
     ubicacion = next((p for p in ['Cabaña', 'Sala', 'Cueva', 'Montaña'] if p.lower() in nombre), 'Entorno')
     return f"{ubicacion} • Sonidos de {tema.capitalize()} 🌿 24/7"
 
-def iniciar_ffmpeg(video_url, audio_url):
-    cmd = [
-        "ffmpeg",
-        "-loglevel", "error",
-        "-re",
-        "-stream_loop", "-1",
-        "-i", video_url,
-        "-i", audio_url,
-        "-map", "0:v:0",
-        "-map", "1:a:0",
-        "-c:v", "copy" if 'drive.google.com' in video_url else "libx264",
-        "-preset", "ultrafast",
-        "-b:v", "2500k",
-        "-maxrate", "3000k",
-        "-bufsize", "5000k",
-        "-pix_fmt", "yuv420p",
-        "-g", "60",
-        "-r", "30",
-        "-c:a", "aac",
-        "-b:a", "160k",
-        "-ar", "48000",
-        "-f", "flv",
-        RTMP_URL
-    ]
-    return subprocess.Popen(cmd)
+def descargar_y_transmitir(video_url, audio_url):
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        try:
+            # Descargar recursos
+            video_path = os.path.join(tmp_dir, "video.mp4")
+            audio_path = os.path.join(tmp_dir, "audio.mp3")
+            
+            logging.info("⬇️ Descargando video...")
+            if not DescargadorDrive.descargar_archivo(video_url, video_path):
+                return None
+                
+            logging.info("⬇️ Descargando audio...")
+            if not DescargadorDrive.descargar_archivo(audio_url, audio_path):
+                return None
+                
+            # Verificar archivos
+            if not os.path.getsize(video_path) > 1024 or not os.path.getsize(audio_path) > 1024:
+                logging.error("Archivos descargados inválidos")
+                return None
+                
+            # Iniciar transmisión
+            cmd = [
+                "ffmpeg",
+                "-loglevel", "error",
+                "-re",
+                "-stream_loop", "-1",
+                "-i", video_path,
+                "-i", audio_path,
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-b:v", "2500k",
+                "-maxrate", "3000k",
+                "-bufsize", "5000k",
+                "-pix_fmt", "yuv420p",
+                "-g", "60",
+                "-r", "30",
+                "-c:a", "aac",
+                "-b:a", "160k",
+                "-ar", "48000",
+                "-f", "flv",
+                RTMP_URL
+            ]
+            return subprocess.Popen(cmd)
+            
+        except Exception as e:
+            logging.error(f"Error en transmisión: {str(e)}")
+            return None
 
 def ciclo_transmision():
     gestor = GestorContenido()
@@ -195,7 +230,7 @@ def ciclo_transmision():
                 fase = (fase + 1) % 3
                 tiempo_inicio = datetime.now()
                 gestor.actualizar_medios()
-                logging.info(f"🔄 Rotando a fase: {['Música', 'Naturaleza', 'Combinado'][fase]}")
+                logging.info(f"🔄 Rotando fase: {['Música', 'Naturaleza', 'Combinado'][fase]}")
             
             # Selección de contenido
             if fase == 0:
@@ -210,26 +245,26 @@ def ciclo_transmision():
             
             titulo = generar_titulo(video['name'])
             
-            # Iniciar transmisión primero
             logging.info(f"▶️ Iniciando transmisión:\nVideo: {video['name']}\nAudio: {audio['name']}")
-            proceso = iniciar_ffmpeg(video['url'], audio['url'])
+            proceso = descargar_y_transmitir(video['url'], audio['url'])
             
-            # Esperar 20 segundos para estabilizar
-            time.sleep(20)
+            if not proceso:
+                time.sleep(60)
+                continue
+                
+            # Esperar inicialización
+            time.sleep(30)
             
-            # Actualizar metadatos de YouTube
+            # Actualizar YouTube
             if youtube.youtube:
-                youtube.actualizar_transmision(titulo, video['url'])
+                youtube.actualizar_transmision(titulo, os.path.join(TEMP_DIR, "video.mp4"))
             
-            # Mantener transmisión por 8 horas
-            time.sleep(28800 - 20)
-            proceso.terminate()
+            # Mantener transmisión
+            proceso.wait()
             
         except Exception as e:
-            logging.error(f"Error en transmisión: {str(e)}")
+            logging.error(f"Error ciclo: {str(e)}")
             time.sleep(60)
-            if 'proceso' in locals():
-                proceso.terminate()
 
 @app.route('/health')
 def health_check():
