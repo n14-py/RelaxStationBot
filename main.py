@@ -6,6 +6,7 @@ import time
 import json
 import requests
 import hashlib
+import re
 from datetime import datetime
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
@@ -53,72 +54,47 @@ class GestorContenido:
                 file_id = parse_qs(parsed.query).get('id', [''])[0]
                 return f"https://drive.google.com/uc?export=download&id={file_id}"
             return url
-        except:
+        except Exception as e:
+            logging.error(f"Error procesando URL: {str(e)}")
             return url
     
     def descargar_archivo(self, url):
-    try:
-        # Obtener ID real de Google Drive
-        if 'drive.google.com' in url:
-            file_id = url.split('id=')[-1].split('&')[0]
-            url = f"https://drive.google.com/uc?export=download&id={file_id}"
-
-        session = requests.Session()
-        response = session.get(url, stream=True, timeout=30)
-        
-        # Manejar confirmación de descarga grande
-        if 'drive.google.com' in url and 'confirm=' not in url:
-            for key, value in response.cookies.items():
-                if key.startswith('download_warning'):
-                    confirm_url = f"{url}&confirm={value}"
-                    response = session.get(confirm_url, stream=True, timeout=30)
-                    break
-        
-        # Determinar extensión real
-        content_disposition = response.headers.get('Content-Disposition', '')
-        filename = re.findall('filename="(.+)"', content_disposition)
-        extension = os.path.splitext(filename[0])[1] if filename else '.mp4'
-        
-        nombre_hash = hashlib.md5(url.encode()).hexdigest()
-        ruta_local = os.path.join(self.media_cache_dir, f"{nombre_hash}{extension}")
-        
-        # Descargar archivo completo
-        with open(ruta_local, 'wb') as f:
-            total_size = 0
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    total_size += len(chunk)
-                    f.write(chunk)
+        try:
+            url_real = self.obtener_url_real(url)
+            session = requests.Session()
+            response = session.get(url_real, stream=True, timeout=30)
             
-            if total_size < 5 * 1024 * 1024:  # Mínimo 5MB
-                raise ValueError("Archivo demasiado pequeño")
-        
-        return ruta_local
-    except Exception as e:
-        logging.error(f"Error descarga {url}: {str(e)}")
-        return None
-    
-    def determinar_extension(self, content_type, url):
-        extensiones = {
-            'video/mp4': '.mp4',
-            'video/quicktime': '.mov',
-            'audio/mpeg': '.mp3',
-            'video/x-matroska': '.mkv'
-        }
-        
-        # Primero por content-type
-        for ct, ext in extensiones.items():
-            if ct in content_type:
-                return ext
-        
-        # Luego por extensión en URL
-        parsed_url = urlparse(url)
-        path_ext = os.path.splitext(parsed_url.path)[1]
-        if path_ext in ['.mp4', '.mov', '.mp3', '.mkv']:
-            return path_ext
-        
-        # Default
-        return '.mp4' if 'video' in content_type else '.mp3'
+            # Manejar confirmación de descarga en Google Drive
+            if 'drive.google.com' in url_real and 'confirm=' not in url_real:
+                for key, value in response.cookies.items():
+                    if key.startswith('download_warning'):
+                        url_real += f"&confirm={value}"
+                        response = session.get(url_real, stream=True, timeout=30)
+                        break
+            
+            # Obtener nombre y extensión real
+            content_disposition = response.headers.get('Content-Disposition', '')
+            filename = re.findall('filename="(.+)"', content_disposition)
+            extension = os.path.splitext(filename[0])[1] if filename else '.mp4'
+            
+            nombre_hash = hashlib.md5(url.encode()).hexdigest()
+            ruta_local = os.path.join(self.media_cache_dir, f"{nombre_hash}{extension}")
+            
+            # Descargar archivo
+            with open(ruta_local, 'wb') as f:
+                total_size = 0
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        total_size += len(chunk)
+                        f.write(chunk)
+                
+                if total_size < 5 * 1024 * 1024:  # Mínimo 5MB
+                    raise ValueError("Archivo demasiado pequeño")
+            
+            return ruta_local
+        except Exception as e:
+            logging.error(f"Error descargando {url}: {str(e)}")
+            return None
     
     def verificar_archivo(self, ruta):
         try:
@@ -126,15 +102,11 @@ class GestorContenido:
                 ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', ruta],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=15,
-                text=True
+                timeout=15
             )
-            if result.returncode != 0:
-                logging.error(f"Error ffprobe: {result.stderr.strip()}")
-                return False
-            return True
+            return result.returncode == 0
         except Exception as e:
-            logging.error(f"Error verificación {ruta}: {str(e)}")
+            logging.error(f"Error verificando archivo: {str(e)}")
             return False
     
     def cargar_medios(self):
@@ -150,7 +122,7 @@ class GestorContenido:
                         logging.warning(f"Archivo inválido: {medio['name']}")
                         medio['local_path'] = None
             
-            # Filtrar medios inválidos
+            # Filtrar medios válidos
             datos['videos'] = [v for v in datos['videos'] if v['local_path']]
             datos['musica'] = [m for m in datos['musica'] if m['local_path']]
             datos['sonidos_naturaleza'] = [s for s in datos['sonidos_naturaleza'] if s['local_path']]
@@ -189,7 +161,7 @@ class YouTubeManager:
             ).execute()
             
             if not broadcasts.get('items'):
-                logging.error("Crea una transmisión ACTIVA en YouTube Studio primero!")
+                logging.error("Primero crea una transmisión ACTIVA en YouTube Studio")
                 return False
             
             broadcast_id = broadcasts['items'][0]['id']
@@ -244,7 +216,7 @@ def ciclo_transmision():
             video = random.choice(videos_validos)
             logging.info(f"🎥 Video seleccionado: {video['name']}")
             
-            # Selección de audios según fase
+            # Selección de audios
             if fase == 0:
                 audios = gestor.medios['musica']
             elif fase == 1:
@@ -266,7 +238,7 @@ def ciclo_transmision():
             # Generar título
             titulo = generar_titulo(video['name'], fase)
             
-            # Comando FFmpeg optimizado
+            # Comando FFmpeg
             cmd = [
                 "ffmpeg",
                 "-loglevel", "error",
@@ -295,17 +267,15 @@ def ciclo_transmision():
                 logging.info("🔴 Stream activo")
                 youtube.actualizar_transmision(titulo)
                 proceso.wait()
-            else:
-                logging.error("❌ Fallo al iniciar stream")
             
             # Limpieza
             if os.path.exists(playlist_path):
                 os.remove(playlist_path)
             
-            logging.info("⏹️ Ciclo completado\n")
+            logging.info("⏹️ Transmisión finalizada\n")
             
         except Exception as e:
-            logging.error(f"Error crítico: {str(e)}")
+            logging.error(f"Error: {str(e)}")
             time.sleep(60)
 
 @app.route('/health')
