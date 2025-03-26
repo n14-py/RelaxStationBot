@@ -5,6 +5,7 @@ import logging
 import time
 import json
 import requests
+import hashlib
 from datetime import datetime
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
@@ -46,7 +47,9 @@ class GestorContenido:
     
     def descargar_audio(self, url):
         try:
-            nombre_archivo = hashlib.md5(url.encode()).hexdigest() + os.path.splitext(url)[1]
+            extension = os.path.splitext(url)[1].split('?')[0]
+            nombre_hash = hashlib.md5(url.encode()).hexdigest()
+            nombre_archivo = f"{nombre_hash}{extension}"
             ruta_local = os.path.join(self.media_cache_dir, nombre_archivo)
             
             if not os.path.exists(ruta_local):
@@ -59,8 +62,8 @@ class GestorContenido:
             return ruta_local
         except Exception as e:
             logging.error(f"Error descargando audio: {str(e)}")
-            return url  # Fallback a URL directa
-    
+            return url
+
     def cargar_medios(self):
         try:
             respuesta = requests.get(MEDIOS_URL, timeout=10)
@@ -70,7 +73,6 @@ class GestorContenido:
             if not all(key in datos for key in ["videos", "musica", "sonidos_naturaleza"]):
                 raise ValueError("Estructura JSON inválida")
             
-            # Descargar toda la música
             for medio in datos['musica'] + datos['sonidos_naturaleza']:
                 medio['local_path'] = self.descargar_audio(medio['url'])
             
@@ -168,12 +170,9 @@ def ciclo_transmision():
     
     while True:
         try:
-            # Seleccionar fase cada 8 horas
-            fase = random.choice([0, 1, 2])  # Aleatorizar fase inicial
-            tiempo_inicio = datetime.now()
-            gestor.actualizar_medios()
+            fase = random.choice([0, 1, 2])
+            video = random.choice(gestor.medios['videos'])
             
-            # Configurar contenido según fase
             if fase == 0:
                 audios = gestor.medios['musica']
             elif fase == 1:
@@ -181,17 +180,14 @@ def ciclo_transmision():
             else:
                 audios = gestor.medios['musica'] + gestor.medios['sonidos_naturaleza']
             
-            video = random.choice(gestor.medios['videos'])
-            random.shuffle(audios)  # Mezclar audios inicialmente
+            random.shuffle(audios)
             
-            # Generar lista de reproducción aleatoria infinita
             playlist_path = "/tmp/playlist.txt"
             with open(playlist_path, 'w') as f:
                 for audio in audios:
-                    f.write(f"file '{audio.get('local_path', audio['url'])}'\n")
-                f.write(f"file '{random.choice(audios).get('local_path', audio['url'])}'\n")  # Forzar bucle
+                    ruta = audio.get('local_path', audio['url'])
+                    f.write(f"file '{ruta}'\n")
 
-            # Configurar FFmpeg para 8 horas
             cmd = [
                 "ffmpeg",
                 "-loglevel", "error",
@@ -200,6 +196,8 @@ def ciclo_transmision():
                 "-i", video['url'],
                 "-f", "concat",
                 "-safe", "0",
+                "-protocol_whitelist", "file,http,https,tcp,tls",
+                "-stream_loop", "-1",
                 "-i", playlist_path,
                 "-map", "0:v:0",
                 "-map", "1:a:0",
@@ -214,18 +212,15 @@ def ciclo_transmision():
                 "-c:a", "aac",
                 "-b:a", "160k",
                 "-ar", "48000",
-                "-t", "28800",  # 8 horas exactas
+                "-t", "28800",
                 "-f", "flv",
                 RTMP_URL
             ]
             
-            logging.info(f"🎬 Iniciando ciclo de 8 horas\nVideo: {video['name']}\nAudios: {len(audios)} pistas mezcladas")
+            logging.info(f"🎬 Iniciando ciclo de 8 horas\nVideo: {video['name']}\nAudios: {len(audios)} pistas")
             
-            # Ejecutar transmisión
             proceso = subprocess.Popen(cmd)
             proceso.wait()
-            
-            # Limpiar
             os.remove(playlist_path)
             
         except Exception as e:
