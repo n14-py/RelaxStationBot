@@ -209,80 +209,98 @@ def generar_titulo(nombre_video):
     return f"{ubicacion} • Sonidos de {tema.capitalize()} 🌿 24/7"
 
 def descargar_y_transmitir(video_url, audio_url):
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        try:
-            # Descargar recursos
-            video_path = os.path.join(tmp_dir, "video.mp4")
-            audio_path = os.path.join(tmp_dir, "audio.mp3")
-            
-            logging.info("⬇️ Descargando video...")
-            if not DescargadorDrive.descargar_archivo(video_url, video_path):
-                return None
-                
-            logging.info("⬇️ Descargando audio...")
-            if not DescargadorDrive.descargar_archivo(audio_url, audio_path):
-                return None
-
-            # Verificar codecs del video
-            probe_cmd = [
-                "ffprobe",
-                "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=codec_name,width,height,pix_fmt",
-                "-of", "json",
-                video_path
-            ]
-            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
-            logging.info(f"🔍 Metadata video:\n{probe_result.stdout}")
-
-            # Iniciar transmisión con logs detallados
-            cmd = [
-                "ffmpeg",
-                "-loglevel", "debug",
-                "-re",
-                "-stream_loop", "-1",
-                "-i", video_path,
-                "-i", audio_path,
-                "-map", "0:v:0",
-                "-map", "1:a:0",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-b:v", "2500k",
-                "-maxrate", "3000k",
-                "-bufsize", "5000k",
-                "-pix_fmt", "yuv420p",
-                "-g", "60",
-                "-r", "30",
-                "-c:a", "aac",
-                "-b:a", "160k",
-                "-ar", "48000",
-                "-f", "flv",
-                RTMP_URL
-            ]
-            
-            proceso = subprocess.Popen(
-                cmd, 
-                stderr=subprocess.PIPE,
-                universal_newlines=True
-            )
-            
-            # Hilo para monitorear logs de FFmpeg
-            def log_stream():
-                while True:
-                    output = proceso.stderr.readline()
-                    if output == '' and proceso.poll() is not None:
-                        break
-                    if output:
-                        logging.info(f"FFMPEG: {output.strip()}")
-            
-            threading.Thread(target=log_stream, daemon=True).start()
-            
-            logging.info("🎥 Transmisión iniciada")
-            return proceso
-            
-        except Exception as e:
-            logging.error(f"🚨 Error en transmisión: {str(e)}")
+    tmp_dir = tempfile.mkdtemp()
+    try:
+        video_path = os.path.join(tmp_dir, "video.mp4")
+        audio_path = os.path.join(tmp_dir, "audio.mp3")
+        
+        logging.info("⬇️ Descargando video...")
+        if not DescargadorDrive.descargar_archivo(video_url, video_path):
             return None
+            
+        logging.info("⬇️ Descargando audio...")
+        if not DescargadorDrive.descargar_archivo(audio_url, audio_path):
+            return None
+
+        # Verificar codecs del video
+        probe_cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name,width,height,pix_fmt",
+            "-of", "json",
+            video_path
+        ]
+        probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+        logging.info(f"🔍 Metadata video:\n{probe_result.stdout}")
+
+        # Iniciar transmisión
+        cmd = [
+            "ffmpeg",
+            "-loglevel", "debug",
+            "-re",
+            "-stream_loop", "-1",
+            "-i", video_path,
+            "-i", audio_path,
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-b:v", "2500k",
+            "-maxrate", "3000k",
+            "-bufsize", "5000k",
+            "-pix_fmt", "yuv420p",
+            "-g", "60",
+            "-r", "30",
+            "-c:a", "aac",
+            "-b:a", "160k",
+            "-ar", "48000",
+            "-f", "flv",
+            RTMP_URL
+        ]
+        
+        proceso = subprocess.Popen(
+            cmd, 
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+        
+        # Hilo para logs de FFmpeg
+        def log_stream():
+            connected = False
+            while True:
+                output = proceso.stderr.readline()
+                if "rtmp://" in output and "connected" in output.lower():
+                    connected = True
+                    logging.info("🟢 Conexión RTMP establecida")
+                if output == '' and proceso.poll() is not None:
+                    break
+                if output:
+                    logging.info(f"FFMPEG: {output.strip()}")
+            if not connected:
+                logging.error("🔴 No se detectó conexión RTMP exitosa")
+        
+        threading.Thread(target=log_stream, daemon=True).start()
+        
+        # Hilo de limpieza
+        def cleanup():
+            proceso.wait()
+            try:
+                os.remove(video_path)
+                os.remove(audio_path)
+                os.rmdir(tmp_dir)
+                logging.info(f"🧹 Limpiados recursos temporales")
+            except Exception as e:
+                logging.error(f"Error limpieza: {str(e)}")
+        
+        threading.Thread(target=cleanup, daemon=True).start()
+        
+        logging.info("🎥 Transmisión iniciada")
+        return proceso
+            
+    except Exception as e:
+        logging.error(f"🚨 Error en transmisión: {str(e)}")
+        return None
 
 def ciclo_transmision():
     gestor = GestorContenido()
@@ -328,11 +346,19 @@ def ciclo_transmision():
                 time.sleep(60)
                 continue
                 
+            # Verificar estado después de 30 segundos
+            time.sleep(30)
+            if proceso.poll() is None:
+                logging.info("✅ FFmpeg sigue en ejecución")
+            else:
+                logging.error(f"🚨 FFmpeg terminó con código: {proceso.returncode}")
+                continue
+                
             # Esperar 10 minutos antes de actualizar
             logging.info("⏳ Esperando 10 minutos para actualizar YouTube...")
             time.sleep(600)
             
-            # Actualizar YouTube con nueva descarga
+            # Actualizar YouTube
             if youtube.youtube:
                 with tempfile.TemporaryDirectory() as tmp_dir:
                     video_path = os.path.join(tmp_dir, "temp_video.mp4")
