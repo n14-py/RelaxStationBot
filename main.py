@@ -49,8 +49,8 @@ class GestorContenido:
     def obtener_url_real(self, url):
         try:
             if 'drive.google.com' in url:
-                query = parse_qs(urlparse(url).query)
-                file_id = query.get('id', [None])[0]
+                parsed = urlparse(url)
+                file_id = parse_qs(parsed.query).get('id', [''])[0]
                 return f"https://drive.google.com/uc?export=download&id={file_id}"
             return url
         except:
@@ -60,64 +60,101 @@ class GestorContenido:
         try:
             url_real = self.obtener_url_real(url)
             nombre_hash = hashlib.md5(url.encode()).hexdigest()
-            ruta_local = os.path.join(self.media_cache_dir, nombre_hash)
+            ruta_base = os.path.join(self.media_cache_dir, nombre_hash)
             
-            if os.path.exists(ruta_local) and os.path.getsize(ruta_local) > 1024:
-                return ruta_local
-                
+            # Verificar si ya existe una versión válida
+            for ext in ['.mp4', '.mp3', '.mkv', '.mov']:
+                if os.path.exists(ruta_base + ext):
+                    return ruta_base + ext
+            
             session = requests.Session()
             response = session.get(url_real, stream=True, timeout=30)
-            response.raise_for_status()
             
-            # Obtener extensión del Content-Type
+            # Manejar confirmación de descarga en Google Drive
+            if 'drive.google.com' in url_real and 'confirm=' not in url_real:
+                for key, value in response.cookies.items():
+                    if key.startswith('download_warning'):
+                        url_real += f"&confirm={value}"
+                        response = session.get(url_real, stream=True, timeout=30)
+                        break
+            
+            # Determinar extensión
             content_type = response.headers.get('Content-Type', '')
-            if 'video' in content_type:
-                extension = '.mp4'
-            elif 'audio' in content_type:
-                extension = '.mp3'
-            else:
-                extension = '.bin'
+            extension = self.determinar_extension(content_type, url_real)
+            ruta_local = ruta_base + extension
             
-            ruta_local += extension
-            
+            # Descargar archivo
             with open(ruta_local, 'wb') as f:
+                total_size = 0
                 for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            
-            if os.path.getsize(ruta_local) < 1024:
-                raise ValueError("Archivo demasiado pequeño")
+                    if chunk:
+                        total_size += len(chunk)
+                        f.write(chunk)
+                
+                if total_size < 1024 * 1024:  # Menos de 1MB = probable error
+                    raise ValueError("Archivo demasiado pequeño")
             
             return ruta_local
         except Exception as e:
-            logging.error(f"Error descargando {url}: {str(e)}")
+            logging.error(f"Error descarga {url}: {str(e)}")
             return None
+    
+    def determinar_extension(self, content_type, url):
+        extensiones = {
+            'video/mp4': '.mp4',
+            'video/quicktime': '.mov',
+            'audio/mpeg': '.mp3',
+            'video/x-matroska': '.mkv'
+        }
+        
+        # Primero por content-type
+        for ct, ext in extensiones.items():
+            if ct in content_type:
+                return ext
+        
+        # Luego por extensión en URL
+        parsed_url = urlparse(url)
+        path_ext = os.path.splitext(parsed_url.path)[1]
+        if path_ext in ['.mp4', '.mov', '.mp3', '.mkv']:
+            return path_ext
+        
+        # Default
+        return '.mp4' if 'video' in content_type else '.mp3'
     
     def verificar_archivo(self, ruta):
         try:
             result = subprocess.run(
-                ['ffprobe', '-v', 'error', ruta],
-                stdout=subprocess.DEVNULL,
+                ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', ruta],
+                stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=10
+                timeout=15,
+                text=True
             )
-            return result.returncode == 0
-        except:
+            if result.returncode != 0:
+                logging.error(f"Error ffprobe: {result.stderr.strip()}")
+                return False
+            return True
+        except Exception as e:
+            logging.error(f"Error verificación {ruta}: {str(e)}")
             return False
     
     def cargar_medios(self):
         try:
-            respuesta = requests.get(MEDIOS_URL, timeout=10)
+            respuesta = requests.get(MEDIOS_URL, timeout=15)
             respuesta.raise_for_status()
             datos = respuesta.json()
             
             for categoria in ['videos', 'musica', 'sonidos_naturaleza']:
                 for medio in datos[categoria]:
-                    local_path = self.descargar_archivo(medio['url'])
-                    if local_path and self.verificar_archivo(local_path):
-                        medio['local_path'] = local_path
-                    else:
-                        medio['local_path'] = None
+                    medio['local_path'] = self.descargar_archivo(medio['url'])
+                    if medio['local_path'] and not self.verificar_archivo(medio['local_path']):
                         logging.warning(f"Archivo inválido: {medio['name']}")
+                        medio['local_path'] = None
+            
+            # Filtrar medios inválidos
+            datos['videos'] = [v for v in datos['videos'] if v['local_path']]
+            datos['musica'] = [m for m in datos['musica'] if m['local_path']]
+            datos['sonidos_naturaleza'] = [s for s in datos['sonidos_naturaleza'] if s['local_path']]
             
             return datos
         except Exception as e:
@@ -146,35 +183,34 @@ class YouTubeManager:
     
     def actualizar_transmision(self, titulo):
         try:
-            for _ in range(3):  # 3 intentos
-                broadcasts = self.youtube.liveBroadcasts().list(
-                    part="id,snippet",
-                    broadcastStatus="active"
-                ).execute()
-                
-                if broadcasts.get('items'):
-                    broadcast_id = broadcasts['items'][0]['id']
-                    
-                    self.youtube.liveBroadcasts().update(
-                        part="snippet",
-                        body={
-                            "id": broadcast_id,
-                            "snippet": {
-                                "title": titulo,
-                                "description": "Streaming 24/7 - Sonidos Naturales y Música Relajante",
-                                "categoryId": "22"
-                            }
-                        }
-                    ).execute()
-                    logging.info(f"Título actualizado: {titulo}")
-                    return True
-                
-                time.sleep(5)
+            broadcasts = self.youtube.liveBroadcasts().list(
+                part="id,snippet",
+                broadcastStatus="active",
+                maxResults=1
+            ).execute()
             
-            logging.error("No se encontró transmisión activa")
-            return False
+            if not broadcasts.get('items'):
+                logging.error("Crea una transmisión ACTIVA en YouTube Studio primero!")
+                return False
+            
+            broadcast_id = broadcasts['items'][0]['id']
+            
+            self.youtube.liveBroadcasts().update(
+                part="snippet",
+                body={
+                    "id": broadcast_id,
+                    "snippet": {
+                        "title": titulo,
+                        "description": "Streaming 24/7 - Sonidos Naturales y Música Relajante",
+                        "categoryId": "22"
+                    }
+                }
+            ).execute()
+            
+            logging.info(f"Título actualizado: {titulo}")
+            return True
         except Exception as e:
-            logging.error(f"Error YouTube API: {str(e)}")
+            logging.error(f"Error actualizando YouTube: {str(e)}")
             return False
 
 def generar_titulo(nombre_video, fase):
@@ -199,21 +235,23 @@ def ciclo_transmision():
         try:
             # Selección de contenido
             fase = random.choice([0, 1, 2])
-            videos_validos = [v for v in gestor.medios['videos'] if v['local_path']]
+            videos_validos = gestor.medios['videos']
+            
             if not videos_validos:
-                logging.error("No hay videos válidos")
+                logging.error("No hay videos válidos disponibles")
                 time.sleep(60)
                 continue
             
             video = random.choice(videos_validos)
             logging.info(f"🎥 Video seleccionado: {video['name']}")
             
+            # Selección de audios según fase
             if fase == 0:
-                audios = [a for a in gestor.medios['musica'] if a['local_path']]
+                audios = gestor.medios['musica']
             elif fase == 1:
-                audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
+                audios = gestor.medios['sonidos_naturaleza']
             else:
-                audios = [a for a in gestor.medios['musica'] + gestor.medios['sonidos_naturaleza'] if a['local_path']]
+                audios = gestor.medios['musica'] + gestor.medios['sonidos_naturaleza']
             
             if not audios:
                 logging.error("No hay audios válidos")
@@ -235,7 +273,6 @@ def ciclo_transmision():
                 "-loglevel", "error",
                 "-re",
                 "-stream_loop", "-1",
-                "-protocol_whitelist", "file,http,https,tcp,tls",
                 "-i", video['local_path'],
                 "-f", "concat",
                 "-safe", "0",
