@@ -178,18 +178,34 @@ class YouTubeManager:
         except Exception as e:
             logging.error(f"Error actualizando YouTube: {str(e)}")
 
-def generar_titulo(nombre_video, fase):
+def generar_titulo(nombre_video, fase, sonido_natural=None):
     nombre = nombre_video.lower()
     ubicacion = next((p for p in ['Cabaña', 'Sala', 'Cueva', 'Montaña', 'Departamento', 'Cafetería'] if p.lower() in nombre), 'Entorno')
     
     if fase == 0:  # Música
         return f"{ubicacion} • Música Relajante 🌿 24/7"
     elif fase == 1:  # Naturaleza
-        tema = next((t for t, keys in PALABRAS_CLAVE.items() if any(k in nombre for k in keys)), 'Naturaleza')
+        tema = sonido_natural if sonido_natural else next((t for t, keys in PALABRAS_CLAVE.items() if any(k in nombre for k in keys)), 'Naturaleza')
         return f"{ubicacion} • Sonidos de {tema.capitalize()} 🌿 24/7"
     else:  # Combinado
-        tema = next((t for t, keys in PALABRAS_CLAVE.items() if any(k in nombre for k in keys)), 'Naturaleza')
+        tema = sonido_natural if sonido_natural else next((t for t, keys in PALABRAS_CLAVE.items() if any(k in nombre for k in keys)), 'Naturaleza')
         return f"{ubicacion} • Música y Sonidos de {tema.capitalize()} 🌿 24/7"
+
+def crear_playlist_musica(audios_musica, duracion_horas=8):
+    """Crea una playlist de música aleatoria para la duración especificada"""
+    playlist_path = "/tmp/playlist_musica.txt"
+    tiempo_total = duracion_horas * 3600  # Convertir a segundos
+    tiempo_actual = 0
+    
+    with open(playlist_path, 'w') as f:
+        while tiempo_actual < tiempo_total:
+            audio = random.choice(audios_musica)
+            if audio['local_path']:
+                f.write(f"file '{os.path.abspath(audio['local_path'])}'\n")
+                # Asumimos 3 minutos por canción (podrías obtener la duración real con ffprobe)
+                tiempo_actual += 180
+    
+    return playlist_path
 
 def ciclo_transmision():
     gestor = GestorContenido()
@@ -202,51 +218,89 @@ def ciclo_transmision():
             video = random.choice(gestor.medios['videos'])
             
             # Configurar contenido según fase
-            if fase == 0:
-                audios = [a for a in gestor.medios['musica'] if a['local_path']]
+            sonido_natural = None
+            if fase == 0:  # Solo música
+                audios_musica = [a for a in gestor.medios['musica'] if a['local_path']]
+                playlist_musica = crear_playlist_musica(audios_musica)
+                playlist_naturaleza = None
                 tipo_contenido = "Música Relajante"
-            elif fase == 1:
-                audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
-                tipo_contenido = "Sonidos de Naturaleza"
-            else:
-                audios = [a for a in gestor.medios['musica'] + gestor.medios['sonidos_naturaleza'] if a['local_path']]
-                tipo_contenido = "Música y Sonidos Naturales"
+                titulo_temporal = "Iniciando transmisión..."
+                
+            elif fase == 1:  # Solo naturaleza
+                audios_naturaleza = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
+                audio_natural = random.choice(audios_naturaleza)
+                sonido_natural = next((t for t, keys in PALABRAS_CLAVE.items() if any(k in audio_natural['name'].lower() for k in keys)), 'Naturaleza')
+                
+                # Crear playlist con el mismo sonido natural en bucle
+                playlist_naturaleza = "/tmp/playlist_naturaleza.txt"
+                with open(playlist_naturaleza, 'w') as f:
+                    f.write(f"file '{os.path.abspath(audio_natural['local_path'])}'\n")
+                
+                playlist_musica = None
+                tipo_contenido = f"Sonidos de {sonido_natural.capitalize()}"
+                titulo_temporal = "Iniciando transmisión..."
+                
+            else:  # Combinado
+                audios_musica = [a for a in gestor.medios['musica'] if a['local_path']]
+                audios_naturaleza = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
+                audio_natural = random.choice(audios_naturaleza)
+                sonido_natural = next((t for t, keys in PALABRAS_CLAVE.items() if any(k in audio_natural['name'].lower() for k in keys)), 'Naturaleza')
+                
+                # Playlist para música (aleatoria)
+                playlist_musica = crear_playlist_musica(audios_musica)
+                
+                # Playlist para sonido natural (bucle)
+                playlist_naturaleza = "/tmp/playlist_naturaleza.txt"
+                with open(playlist_naturaleza, 'w') as f:
+                    f.write(f"file '{os.path.abspath(audio_natural['local_path'])}'\n")
+                
+                tipo_contenido = f"Música y Sonidos de {sonido_natural.capitalize()}"
+                titulo_temporal = "Iniciando transmisión..."
             
-            if not audios:
-                logging.error("No hay audios válidos disponibles")
-                time.sleep(60)
-                continue
-            
-            random.shuffle(audios)
-            
-            # Generar playlist
-            playlist_path = "/tmp/playlist.txt"
-            with open(playlist_path, 'w') as f:
-                for audio in audios:
-                    if audio['local_path']:
-                        f.write(f"file '{os.path.abspath(audio['local_path'])}'\n")
-            
-            # Generar título según fase
-            titulo = generar_titulo(video['name'], fase)
-            
-            # Actualizar YouTube
-            if youtube.youtube:
-                youtube.actualizar_transmision(titulo, video['url'])
-            
-            # Comando FFmpeg
+            # Comando FFmpeg base
             cmd = [
                 "ffmpeg",
                 "-loglevel", "error",
                 "-re",
-                "-stream_loop", "-1",
+                "-stream_loop", "-1",  # Bucle infinito para el video
                 "-i", video['url'],
-                "-f", "concat",
-                "-safe", "0",
-                "-protocol_whitelist", "file,http,https,tcp,tls",
-                "-stream_loop", "-1",
-                "-i", playlist_path,
-                "-map", "0:v:0",
-                "-map", "1:a:0",
+            ]
+            
+            # Añadir audio según la fase
+            if fase == 0:  # Solo música
+                cmd.extend([
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-stream_loop", "-1",
+                    "-i", playlist_musica,
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
+                ])
+            elif fase == 1:  # Solo naturaleza
+                cmd.extend([
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-stream_loop", "-1",
+                    "-i", playlist_naturaleza,
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
+                ])
+            else:  # Combinado
+                cmd.extend([
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-stream_loop", "-1",
+                    "-i", playlist_naturaleza,
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", playlist_musica,
+                    "-filter_complex", "[1:a][2:a]amix=inputs=2:duration=first:dropout_transition=3[aout]",
+                    "-map", "0:v:0",
+                    "-map", "[aout]",
+                ])
+            
+            # Configuración común
+            cmd.extend([
                 "-c:v", "libx264",
                 "-preset", "ultrafast",
                 "-b:v", "2500k",
@@ -258,26 +312,41 @@ def ciclo_transmision():
                 "-c:a", "aac",
                 "-b:a", "160k",
                 "-ar", "48000",
-                "-t", "28800",
+                "-t", "28800",  # 8 horas
                 "-f", "flv",
                 RTMP_URL
-            ]
+            ])
+            
+            # Iniciar transmisión con título temporal
+            logging.info(f"🚀 Iniciando transmisión con título temporal...")
+            proceso = subprocess.Popen(cmd)
+            
+            # Esperar 30 segundos para que el stream esté estable
+            time.sleep(30)
+            
+            # Generar y actualizar título definitivo
+            titulo_definitivo = generar_titulo(video['name'], fase, sonido_natural)
+            if youtube.youtube:
+                youtube.actualizar_transmision(titulo_definitivo, video['url'])
             
             # Log detallado
             logging.info(f"""
-            🎬 INICIANDO TRANSMISIÓN 🎬
-            📺 Video: {video['name']}
+            🎬 TRANSMISIÓN INICIADA 🎬
+            📺 Video: {video['name']} (en bucle)
             🎵 Tipo: {tipo_contenido}
-            🎶 Audios: {len(audios)} pistas
-            🏷️ Título actualizado: {titulo}
+            {'🎶 Música: Aleatoria' if fase in [0, 2] else ''}
+            {'🌿 Sonido natural: ' + sonido_natural.capitalize() if fase in [1, 2] else ''}
+            🏷️ Título: {titulo_definitivo}
             ⏳ Duración: 8 horas
             """)
             
-            proceso = subprocess.Popen(cmd)
+            # Esperar a que termine la transmisión (8 horas)
             proceso.wait()
             
-            if os.path.exists(playlist_path):
-                os.remove(playlist_path)
+            # Limpieza
+            for playlist in [playlist_musica, playlist_naturaleza]:
+                if playlist and os.path.exists(playlist):
+                    os.remove(playlist)
             
         except Exception as e:
             logging.error(f"Error en transmisión: {str(e)}")
