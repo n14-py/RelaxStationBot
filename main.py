@@ -12,7 +12,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from flask import Flask
 from waitress import serve
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 app = Flask(__name__)
 
@@ -48,30 +48,32 @@ class GestorContenido:
     
     def obtener_url_real(self, gdrive_url):
         try:
-            session = requests.Session()
-            response = session.get(gdrive_url, allow_redirects=True, stream=True, timeout=10)
-            if response.status_code == 200:
-                return response.url
-            return None
-        except Exception as e:
-            logging.error(f"Error resolviendo URL: {str(e)}")
-            return None
+            file_id = parse_qs(urlparse(gdrive_url).query.get('id', [''])[0]
+            return f"https://drive.google.com/uc?export=download&id={file_id}"
+        except:
+            return gdrive_url
+    
+    def verificar_formato_ffprobe(self, url):
+        try:
+            result = subprocess.run(
+                ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_name', '-of', 'default=nokey=1:noprint_wrappers=1', url],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10
+            )
+            return result.returncode == 0
+        except:
+            return False
     
     def descargar_audio(self, url):
         try:
             nombre_hash = hashlib.md5(url.encode()).hexdigest()
-            extension = '.mp3'
-            nombre_archivo = f"{nombre_hash}{extension}"
-            ruta_local = os.path.join(self.media_cache_dir, nombre_archivo)
+            ruta_local = os.path.join(self.media_cache_dir, f"{nombre_hash}.mp3")
             
-            if os.path.exists(ruta_local) and os.path.getsize(ruta_local) > 1024:
+            if os.path.exists(ruta_local):
                 return ruta_local
                 
-            real_url = self.obtener_url_real(url)
-            if not real_url:
-                return None
-                
-            respuesta = requests.get(real_url, stream=True, timeout=30)
+            respuesta = requests.get(url, stream=True, timeout=30)
             respuesta.raise_for_status()
             
             with open(ruta_local, 'wb') as f:
@@ -89,23 +91,18 @@ class GestorContenido:
             respuesta.raise_for_status()
             datos = respuesta.json()
             
-            valid_extensions = {
-                'videos': ['.mp4', '.mov', '.mkv'],
-                'musica': ['.mp3', '.wav'],
-                'sonidos_naturaleza': ['.mp3', '.wav']
-            }
-            
             for categoria in ['videos', 'musica', 'sonidos_naturaleza']:
                 for medio in datos[categoria]:
-                    ext = os.path.splitext(medio['url'])[1].lower()
-                    if ext not in valid_extensions[categoria]:
-                        logging.warning(f"Formato no soportado en {medio['name']}: {ext}")
-                        medio['local_path'] = None
-                    else:
-                        if categoria == 'videos':
-                            medio['local_path'] = self.obtener_url_real(medio['url'])
+                    url_real = self.obtener_url_real(medio['url'])
+                    
+                    if categoria == 'videos':
+                        if self.verificar_formato_ffprobe(url_real):
+                            medio['local_path'] = url_real
                         else:
-                            medio['local_path'] = self.descargar_audio(medio['url'])
+                            medio['local_path'] = None
+                            logging.warning(f"Video no válido: {medio['name']}")
+                    else:
+                        medio['local_path'] = self.descargar_audio(url_real)
             
             return datos
         except Exception as e:
@@ -146,16 +143,6 @@ class YouTubeManager:
     
     def generar_miniatura(self, video_url):
         try:
-            probe = subprocess.run(
-                ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", 
-                "default=noprint_wrappers=1:nokey=1", video_url],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            if probe.returncode != 0:
-                raise ValueError("Video no accesible")
-            
             output_path = "/tmp/miniatura.jpg"
             subprocess.run([
                 "ffmpeg",
@@ -167,14 +154,13 @@ class YouTubeManager:
             ], check=True, timeout=15)
             return output_path
         except:
-            logging.warning("Usando miniatura por defecto")
             return self.miniatura_default
     
     def actualizar_transmision(self, titulo, video_url):
         try:
             broadcasts = self.verificar_transmision()
             if not broadcasts:
-                logging.error("No hay transmisión activa en YouTube")
+                logging.error("Crea una transmisión ACTIVA en YouTube Studio primero!")
                 return
                 
             broadcast_id = broadcasts[0]['id']
@@ -197,8 +183,6 @@ class YouTubeManager:
                     videoId=broadcast_id,
                     media_body=thumbnail_path
                 ).execute()
-                if thumbnail_path != self.miniatura_default:
-                    os.remove(thumbnail_path)
             
             logging.info(f"Título actualizado: {titulo}")
         except Exception as e:
@@ -225,25 +209,26 @@ def ciclo_transmision():
     while True:
         try:
             if not youtube.verificar_transmision():
-                logging.error("NO HAY TRANSMISIÓN ACTIVA EN YOUTUBE")
+                logging.error("Configura primero una transmisión ACTIVA en YouTube Studio!")
                 time.sleep(300)
                 continue
                 
             fase = random.choice([0, 1, 2])
-            video = random.choice([v for v in gestor.medios['videos'] if v['local_path']])
+            videos_validos = [v for v in gestor.medios['videos'] if v['local_path']]
+            if not videos_validos:
+                logging.error("No hay videos válidos disponibles")
+                time.sleep(60)
+                continue
+                
+            video = random.choice(videos_validos)
             logging.info(f"🎥 Video seleccionado: {video['name']}")
-            logging.info(f"🔧 Fase: {['Música', 'Naturaleza', 'Combinado'][fase]}")
             
             if fase == 0:
                 audios = [a for a in gestor.medios['musica'] if a['local_path']]
             elif fase == 1:
                 audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
             else:
-                naturaleza = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
-                musica = [a for a in gestor.medios['musica'] if a['local_path']]
-                if not naturaleza or not musica:
-                    raise ValueError("Faltan archivos para fase combinada")
-                audios = (random.choice(naturaleza), musica)
+                audios = [a for a in gestor.medios['musica'] + gestor.medios['sonidos_naturaleza'] if a['local_path']]
             
             if not audios:
                 logging.error("No hay audios disponibles")
@@ -251,9 +236,13 @@ def ciclo_transmision():
                 continue
                 
             titulo = generar_titulo(video['name'], fase)
-            logging.info(f"🏷️ Título: {titulo}")
+            logging.info(f"🏷️ Título generado: {titulo}")
             
-            # Generar comando FFmpeg
+            playlist_path = "/tmp/playlist.txt"
+            with open(playlist_path, 'w') as f:
+                for audio in audios:
+                    f.write(f"file '{audio['local_path']}'\n")
+            
             cmd = [
                 "ffmpeg",
                 "-loglevel", "error",
@@ -262,19 +251,10 @@ def ciclo_transmision():
                 "-i", video['local_path'],
                 "-f", "concat",
                 "-safe", "0",
-                "-protocol_whitelist", "file,http,https,tcp,tls",
-                "-stream_loop", "-1",
-                "-i", "audio_input.txt",
+                "-i", playlist_path,
                 "-map", "0:v:0",
                 "-map", "1:a:0",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-b:v", "2500k",
-                "-maxrate", "3000k",
-                "-bufsize", "5000k",
-                "-pix_fmt", "yuv420p",
-                "-g", "60",
-                "-r", "30",
+                "-c:v", "copy",
                 "-c:a", "aac",
                 "-b:a", "160k",
                 "-ar", "48000",
@@ -282,47 +262,6 @@ def ciclo_transmision():
                 "-f", "flv",
                 RTMP_URL
             ]
-            
-            # Manejo especial para fase combinada
-            if fase == 2:
-                with open("naturaleza.txt", "w") as f:
-                    f.write(f"file '{audios[0]['local_path']}'\n")
-                with open("musica.txt", "w") as f:
-                    for track in audios[1]:
-                        f.write(f"file '{track['local_path']}'\n")
-                
-                cmd = [
-                    "ffmpeg",
-                    "-loglevel", "error",
-                    "-re",
-                    "-stream_loop", "-1",
-                    "-i", video['local_path'],
-                    "-f", "concat",
-                    "-safe", "0",
-                    "-stream_loop", "-1",
-                    "-i", "naturaleza.txt",
-                    "-f", "concat",
-                    "-safe", "0",
-                    "-i", "musica.txt",
-                    "-filter_complex",
-                    "[1:a][2:a]amix=inputs=2:duration=longest[a]",
-                    "-map", "0:v:0",
-                    "-map", "[a]",
-                    "-c:v", "libx264",
-                    "-preset", "ultrafast",
-                    "-b:v", "2500k",
-                    "-maxrate", "3000k",
-                    "-bufsize", "5000k",
-                    "-pix_fmt", "yuv420p",
-                    "-g", "60",
-                    "-r", "30",
-                    "-c:a", "aac",
-                    "-b:a", "160k",
-                    "-ar", "48000",
-                    "-t", "28800",
-                    "-f", "flv",
-                    RTMP_URL
-                ]
             
             logging.info("🚀 Iniciando transmisión...")
             proceso = subprocess.Popen(cmd)
@@ -332,18 +271,14 @@ def ciclo_transmision():
                 logging.info("🔴 Stream activo")
                 youtube.actualizar_transmision(titulo, video['local_path'])
                 proceso.wait()
-            else:
-                logging.error("❌ El stream falló al iniciar")
             
-            # Limpieza
-            for f in ["audio_input.txt", "naturaleza.txt", "musica.txt"]:
-                if os.path.exists(f):
-                    os.remove(f)
+            if os.path.exists(playlist_path):
+                os.remove(playlist_path)
             
             logging.info("⏹️ Transmisión finalizada\n")
             
         except Exception as e:
-            logging.error(f"Error crítico: {str(e)}")
+            logging.error(f"Error: {str(e)}")
             time.sleep(60)
 
 @app.route('/health')
