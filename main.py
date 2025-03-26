@@ -1,4 +1,5 @@
 import os
+import re
 import random
 import subprocess
 import logging
@@ -6,7 +7,6 @@ import time
 import json
 import requests
 import hashlib
-import re
 from datetime import datetime
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
@@ -72,7 +72,7 @@ class GestorContenido:
                         response = session.get(url_real, stream=True, timeout=30)
                         break
             
-            # Obtener nombre y extensión real
+            # Obtener extensión real
             content_disposition = response.headers.get('Content-Disposition', '')
             filename = re.findall('filename="(.+)"', content_disposition)
             extension = os.path.splitext(filename[0])[1] if filename else '.mp4'
@@ -99,7 +99,7 @@ class GestorContenido:
     def verificar_archivo(self, ruta):
         try:
             result = subprocess.run(
-                ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', ruta],
+                ['ffprobe', '-v', 'error', ruta],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=15
@@ -152,7 +152,23 @@ class YouTubeManager:
             logging.error(f"Error autenticación YouTube: {str(e)}")
             return None
     
-    def actualizar_transmision(self, titulo):
+    def generar_miniatura(self, video_url):
+        try:
+            output_path = "/tmp/miniatura.jpg"
+            subprocess.run([
+                "ffmpeg",
+                "-y", "-ss", "00:00:03",
+                "-i", video_url,
+                "-vframes", "1",
+                "-q:v", "2",
+                output_path
+            ], check=True, timeout=15)
+            return output_path
+        except Exception as e:
+            logging.error(f"Error generando miniatura: {str(e)}")
+            return None
+    
+    def actualizar_transmision(self, titulo, video_url):
         try:
             broadcasts = self.youtube.liveBroadcasts().list(
                 part="id,snippet",
@@ -161,11 +177,13 @@ class YouTubeManager:
             ).execute()
             
             if not broadcasts.get('items'):
-                logging.error("Primero crea una transmisión ACTIVA en YouTube Studio")
+                logging.error("Crea una transmisión ACTIVA en YouTube Studio primero!")
                 return False
             
             broadcast_id = broadcasts['items'][0]['id']
+            thumbnail_path = self.generar_miniatura(video_url)
             
+            # Actualizar metadatos
             self.youtube.liveBroadcasts().update(
                 part="snippet",
                 body={
@@ -178,7 +196,15 @@ class YouTubeManager:
                 }
             ).execute()
             
-            logging.info(f"Título actualizado: {titulo}")
+            # Actualizar miniatura
+            if thumbnail_path and os.path.exists(thumbnail_path):
+                self.youtube.thumbnails().set(
+                    videoId=broadcast_id,
+                    media_body=thumbnail_path
+                ).execute()
+                os.remove(thumbnail_path)
+            
+            logging.info(f"Actualizado YouTube: {titulo}")
             return True
         except Exception as e:
             logging.error(f"Error actualizando YouTube: {str(e)}")
@@ -201,27 +227,27 @@ def generar_titulo(nombre_video, fase):
 def ciclo_transmision():
     gestor = GestorContenido()
     youtube = YouTubeManager()
+    tiempo_inicio = datetime.now()
+    fase = 0  # 0=Música, 1=Naturaleza, 2=Combinado
     
     while True:
         try:
-            # Selección de contenido
-            fase = random.choice([0, 1, 2])
-            videos_validos = gestor.medios['videos']
+            # Rotar cada 8 horas
+            if (datetime.now() - tiempo_inicio).total_seconds() >= 28800:
+                fase = (fase + 1) % 3
+                tiempo_inicio = datetime.now()
+                gestor.medios = gestor.cargar_medios()
+                logging.info(f"🔄 Rotando a fase: {['Música', 'Naturaleza', 'Combinado'][fase]}")
             
-            if not videos_validos:
-                logging.error("No hay videos válidos disponibles")
-                time.sleep(60)
-                continue
-            
-            video = random.choice(videos_validos)
-            logging.info(f"🎥 Video seleccionado: {video['name']}")
-            
-            # Selección de audios
+            # Seleccionar contenido
             if fase == 0:
+                video = random.choice(gestor.medios['videos'])
                 audios = gestor.medios['musica']
             elif fase == 1:
+                video = random.choice(gestor.medios['videos'])
                 audios = gestor.medios['sonidos_naturaleza']
             else:
+                video = random.choice(gestor.medios['videos'])
                 audios = gestor.medios['musica'] + gestor.medios['sonidos_naturaleza']
             
             if not audios:
@@ -229,14 +255,18 @@ def ciclo_transmision():
                 time.sleep(60)
                 continue
             
+            # Generar título
+            titulo = generar_titulo(video['name'], fase)
+            
+            # Actualizar YouTube
+            if youtube.youtube:
+                youtube.actualizar_transmision(titulo, video['local_path'])
+            
             # Generar playlist
             playlist_path = "/tmp/playlist.txt"
             with open(playlist_path, 'w') as f:
                 for audio in audios:
                     f.write(f"file '{audio['local_path']}'\n")
-            
-            # Generar título
-            titulo = generar_titulo(video['name'], fase)
             
             # Comando FFmpeg
             cmd = [
@@ -253,20 +283,14 @@ def ciclo_transmision():
                 "-c:a", "aac",
                 "-b:a", "160k",
                 "-ar", "48000",
-                "-t", "28800",  # 8 horas
+                "-t", "28800",
                 "-f", "flv",
                 RTMP_URL
             ]
             
-            logging.info("🚀 Iniciando transmisión...")
+            logging.info(f"🚀 Iniciando transmisión: {titulo}")
             proceso = subprocess.Popen(cmd)
-            
-            # Esperar inicialización
-            time.sleep(30)
-            if proceso.poll() is None:
-                logging.info("🔴 Stream activo")
-                youtube.actualizar_transmision(titulo)
-                proceso.wait()
+            proceso.wait()
             
             # Limpieza
             if os.path.exists(playlist_path):
