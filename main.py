@@ -1,4 +1,3 @@
-
 import os
 import re
 import random
@@ -46,8 +45,8 @@ class GestorContenido:
         self.medios = self.cargar_medios()
     
     def cargar_medios(self):
-        try:  # <- ¡Faltaba indentación aquí!
-            respuesta = requests.get(MEDIOS_URL, timeout=10)
+        try:
+            respuesta = requests.get(MEDIOS_URL, timeout=15)
             respuesta.raise_for_status()
             datos = respuesta.json()
             
@@ -85,18 +84,25 @@ class YouTubeManager:
             return None
     
     def generar_miniatura(self, video_url):
-        # Extraer primer frame del video
         try:
             output_path = "/tmp/miniatura.jpg"
-            subprocess.run([
-                "ffmpeg",
-                "-y",
-                "-ss", "00:00:01",
-                "-i", video_url,
-                "-vframes", "1",
-                "-q:v", "2",
-                output_path
-            ], check=True)
+            result = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-ss", "00:00:01",
+                    "-i", video_url,
+                    "-vframes", "1",
+                    "-q:v", "2",
+                    output_path
+                ],
+                stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                timeout=15
+            )
+            if result.returncode != 0:
+                logging.error(f"Error FFmpeg: {result.stderr.decode()}")
+                return None
             return output_path
         except Exception as e:
             logging.error(f"Error generando miniatura: {str(e)}")
@@ -104,22 +110,21 @@ class YouTubeManager:
     
     def actualizar_transmision(self, titulo, video_url):
         try:
-            # Generar miniatura
-            thumbnail_path = self.generar_miniatura(video_url)
-            
-            # Obtener transmisión activa
+            if not self.youtube:
+                return
+
             broadcasts = self.youtube.liveBroadcasts().list(
                 part="id,snippet,status",
                 broadcastStatus="active"
             ).execute()
             
             if not broadcasts.get('items'):
-                logging.error("¡Crea una transmisión ACTIVA en YouTube Studio primero!")
+                logging.error("¡No hay transmisión activa en YouTube!")
                 return
             
             broadcast_id = broadcasts['items'][0]['id']
             
-            # Actualizar título
+            # Actualizar título primero
             self.youtube.liveBroadcasts().update(
                 part="snippet",
                 body={
@@ -132,7 +137,8 @@ class YouTubeManager:
                 }
             ).execute()
             
-            # Actualizar miniatura
+            # Intentar miniatura después
+            thumbnail_path = self.generar_miniatura(video_url)
             if thumbnail_path:
                 self.youtube.thumbnails().set(
                     videoId=broadcast_id,
@@ -151,22 +157,47 @@ def generar_titulo(nombre_video):
     ubicacion = next((p for p in ['Cabaña', 'Sala', 'Cueva', 'Montaña'] if p.lower() in nombre), 'Entorno')
     return f"{ubicacion} • Sonidos de {tema.capitalize()} 🌿 24/7"
 
+def iniciar_ffmpeg(video_url, audio_url):
+    cmd = [
+        "ffmpeg",
+        "-loglevel", "error",
+        "-re",
+        "-stream_loop", "-1",
+        "-i", video_url,
+        "-i", audio_url,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c:v", "copy" if 'drive.google.com' in video_url else "libx264",
+        "-preset", "ultrafast",
+        "-b:v", "2500k",
+        "-maxrate", "3000k",
+        "-bufsize", "5000k",
+        "-pix_fmt", "yuv420p",
+        "-g", "60",
+        "-r", "30",
+        "-c:a", "aac",
+        "-b:a", "160k",
+        "-ar", "48000",
+        "-f", "flv",
+        RTMP_URL
+    ]
+    return subprocess.Popen(cmd)
+
 def ciclo_transmision():
     gestor = GestorContenido()
     youtube = YouTubeManager()
-    fase = 0  # 0=música, 1=naturaleza, 2=combinado
+    fase = 0
     tiempo_inicio = datetime.now()
     
     while True:
         try:
-            # Rotar cada 8 horas
             if (datetime.now() - tiempo_inicio).total_seconds() >= 28800:
                 fase = (fase + 1) % 3
                 tiempo_inicio = datetime.now()
                 gestor.actualizar_medios()
                 logging.info(f"🔄 Rotando a fase: {['Música', 'Naturaleza', 'Combinado'][fase]}")
             
-            # Seleccionar contenido
+            # Selección de contenido
             if fase == 0:
                 video = random.choice(gestor.medios['videos'])
                 audio = random.choice(gestor.medios['musica'])
@@ -177,47 +208,28 @@ def ciclo_transmision():
                 video = random.choice(gestor.medios['videos'])
                 audio = random.choice(gestor.medios['musica'] + gestor.medios['sonidos_naturaleza'])
             
-            # Generar título automático
             titulo = generar_titulo(video['name'])
             
-            # Actualizar YouTube
+            # Iniciar transmisión primero
+            logging.info(f"▶️ Iniciando transmisión:\nVideo: {video['name']}\nAudio: {audio['name']}")
+            proceso = iniciar_ffmpeg(video['url'], audio['url'])
+            
+            # Esperar 20 segundos para estabilizar
+            time.sleep(20)
+            
+            # Actualizar metadatos de YouTube
             if youtube.youtube:
                 youtube.actualizar_transmision(titulo, video['url'])
             
-            # Iniciar FFmpeg
-            cmd = [
-                "ffmpeg",
-                "-loglevel", "error",
-                "-re",
-                "-stream_loop", "-1",
-                "-i", video['url'],
-                "-i", audio['url'],
-                "-map", "0:v:0",
-                "-map", "1:a:0",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-b:v", "2500k",
-                "-maxrate", "3000k",
-                "-bufsize", "5000k",
-                "-pix_fmt", "yuv420p",
-                "-g", "60",
-                "-r", "30",
-                "-c:a", "aac",
-                "-b:a", "160k",
-                "-ar", "48000",
-                "-f", "flv",
-                RTMP_URL
-            ]
-            
-            logging.info(f"▶️ Iniciando transmisión:\nVideo: {video['name']}\nAudio: {audio['name']}")
-            
-            proceso = subprocess.Popen(cmd)
-            time.sleep(28800)  # 8 horas
+            # Mantener transmisión por 8 horas
+            time.sleep(28800 - 20)
             proceso.terminate()
             
         except Exception as e:
             logging.error(f"Error en transmisión: {str(e)}")
             time.sleep(60)
+            if 'proceso' in locals():
+                proceso.terminate()
 
 @app.route('/health')
 def health_check():
