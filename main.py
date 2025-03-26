@@ -12,6 +12,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from flask import Flask
 from waitress import serve
+from urllib.parse import urlparse, parse_qs
 
 app = Flask(__name__)
 
@@ -42,39 +43,81 @@ PALABRAS_CLAVE = {
 class GestorContenido:
     def __init__(self):
         self.media_cache_dir = os.path.abspath("./media_cache")
-        os.makedirs(self.media_cache_dir, exist_ok=True)
+        os.makedirs(self.media_cache_dir, exist_ok=True, mode=0o777)
         self.medios = self.cargar_medios()
+    
+    def obtener_url_real(self, url):
+        try:
+            if 'drive.google.com' in url:
+                query = parse_qs(urlparse(url).query)
+                file_id = query.get('id', [None])[0]
+                return f"https://drive.google.com/uc?export=download&id={file_id}"
+            return url
+        except:
+            return url
     
     def descargar_archivo(self, url):
         try:
+            url_real = self.obtener_url_real(url)
             nombre_hash = hashlib.md5(url.encode()).hexdigest()
-            ruta_local = os.path.join(self.media_cache_dir, f"{nombre_hash}")
+            ruta_local = os.path.join(self.media_cache_dir, nombre_hash)
             
-            if os.path.exists(ruta_local):
+            if os.path.exists(ruta_local) and os.path.getsize(ruta_local) > 1024:
                 return ruta_local
                 
-            respuesta = requests.get(url, stream=True, timeout=30)
-            respuesta.raise_for_status()
+            session = requests.Session()
+            response = session.get(url_real, stream=True, timeout=30)
+            response.raise_for_status()
+            
+            # Obtener extensión del Content-Type
+            content_type = response.headers.get('Content-Type', '')
+            if 'video' in content_type:
+                extension = '.mp4'
+            elif 'audio' in content_type:
+                extension = '.mp3'
+            else:
+                extension = '.bin'
+            
+            ruta_local += extension
             
             with open(ruta_local, 'wb') as f:
-                for chunk in respuesta.iter_content(chunk_size=8192):
+                for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
+            
+            if os.path.getsize(ruta_local) < 1024:
+                raise ValueError("Archivo demasiado pequeño")
             
             return ruta_local
         except Exception as e:
             logging.error(f"Error descargando {url}: {str(e)}")
             return None
-
+    
+    def verificar_archivo(self, ruta):
+        try:
+            result = subprocess.run(
+                ['ffprobe', '-v', 'error', ruta],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=10
+            )
+            return result.returncode == 0
+        except:
+            return False
+    
     def cargar_medios(self):
         try:
             respuesta = requests.get(MEDIOS_URL, timeout=10)
             respuesta.raise_for_status()
             datos = respuesta.json()
             
-            # Descargar todo el contenido
             for categoria in ['videos', 'musica', 'sonidos_naturaleza']:
                 for medio in datos[categoria]:
-                    medio['local_path'] = self.descargar_archivo(medio['url'])
+                    local_path = self.descargar_archivo(medio['url'])
+                    if local_path and self.verificar_archivo(local_path):
+                        medio['local_path'] = local_path
+                    else:
+                        medio['local_path'] = None
+                        logging.warning(f"Archivo inválido: {medio['name']}")
             
             return datos
         except Exception as e:
@@ -103,36 +146,41 @@ class YouTubeManager:
     
     def actualizar_transmision(self, titulo):
         try:
-            broadcasts = self.youtube.liveBroadcasts().list(
-                part="id,snippet",
-                broadcastStatus="active"
-            ).execute()
-            
-            if not broadcasts.get('items'):
-                logging.error("¡Crea una transmisión ACTIVA en YouTube Studio primero!")
-                return
+            for _ in range(3):  # 3 intentos
+                broadcasts = self.youtube.liveBroadcasts().list(
+                    part="id,snippet",
+                    broadcastStatus="active"
+                ).execute()
                 
-            broadcast_id = broadcasts['items'][0]['id']
+                if broadcasts.get('items'):
+                    broadcast_id = broadcasts['items'][0]['id']
+                    
+                    self.youtube.liveBroadcasts().update(
+                        part="snippet",
+                        body={
+                            "id": broadcast_id,
+                            "snippet": {
+                                "title": titulo,
+                                "description": "Streaming 24/7 - Sonidos Naturales y Música Relajante",
+                                "categoryId": "22"
+                            }
+                        }
+                    ).execute()
+                    logging.info(f"Título actualizado: {titulo}")
+                    return True
+                
+                time.sleep(5)
             
-            self.youtube.liveBroadcasts().update(
-                part="snippet",
-                body={
-                    "id": broadcast_id,
-                    "snippet": {
-                        "title": titulo,
-                        "description": "Streaming 24/7 - Sonidos Naturales y Música Relajante",
-                        "categoryId": "22"
-                    }
-                }
-            ).execute()
-            
-            logging.info(f"Título actualizado: {titulo}")
+            logging.error("No se encontró transmisión activa")
+            return False
         except Exception as e:
-            logging.error(f"Error actualizando YouTube: {str(e)}")
+            logging.error(f"Error YouTube API: {str(e)}")
+            return False
 
 def generar_titulo(nombre_video, fase):
     nombre = nombre_video.lower()
-    ubicacion = next((p for p in ['Cabaña', 'Sala', 'Cueva', 'Montaña', 'Departamento', 'Cafetería'] if p.lower() in nombre), 'Entorno')
+    ubicaciones = ['cabaña', 'sala', 'cueva', 'montaña', 'departamento', 'cafetería']
+    ubicacion = next((p for p in ubicaciones if p in nombre), 'Entorno').capitalize()
     
     if fase == 0:
         return f"{ubicacion} • Música Relajante 🌿 24/7"
@@ -151,14 +199,26 @@ def ciclo_transmision():
         try:
             # Selección de contenido
             fase = random.choice([0, 1, 2])
-            video = random.choice(gestor.medios['videos'])
+            videos_validos = [v for v in gestor.medios['videos'] if v['local_path']]
+            if not videos_validos:
+                logging.error("No hay videos válidos")
+                time.sleep(60)
+                continue
+            
+            video = random.choice(videos_validos)
+            logging.info(f"🎥 Video seleccionado: {video['name']}")
             
             if fase == 0:
-                audios = gestor.medios['musica']
+                audios = [a for a in gestor.medios['musica'] if a['local_path']]
             elif fase == 1:
-                audios = gestor.medios['sonidos_naturaleza']
+                audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
             else:
-                audios = gestor.medios['musica'] + gestor.medios['sonidos_naturaleza']
+                audios = [a for a in gestor.medios['musica'] + gestor.medios['sonidos_naturaleza'] if a['local_path']]
+            
+            if not audios:
+                logging.error("No hay audios válidos")
+                time.sleep(60)
+                continue
             
             # Generar playlist
             playlist_path = "/tmp/playlist.txt"
@@ -169,37 +229,47 @@ def ciclo_transmision():
             # Generar título
             titulo = generar_titulo(video['name'], fase)
             
-            # Comando FFmpeg simplificado
+            # Comando FFmpeg optimizado
             cmd = [
                 "ffmpeg",
                 "-loglevel", "error",
                 "-re",
                 "-stream_loop", "-1",
+                "-protocol_whitelist", "file,http,https,tcp,tls",
                 "-i", video['local_path'],
                 "-f", "concat",
                 "-safe", "0",
+                "-protocol_whitelist", "file,http,https,tcp,tls",
                 "-i", playlist_path,
                 "-c:v", "copy",
                 "-c:a", "aac",
                 "-b:a", "160k",
+                "-ar", "48000",
+                "-t", "28800",  # 8 horas
                 "-f", "flv",
                 RTMP_URL
             ]
             
-            logging.info(f"▶️ Iniciando stream: {titulo}")
+            logging.info("🚀 Iniciando transmisión...")
             proceso = subprocess.Popen(cmd)
             
-            # Actualizar YouTube después de 30 segundos
+            # Esperar inicialización
             time.sleep(30)
-            if youtube.youtube:
+            if proceso.poll() is None:
+                logging.info("🔴 Stream activo")
                 youtube.actualizar_transmision(titulo)
+                proceso.wait()
+            else:
+                logging.error("❌ Fallo al iniciar stream")
             
-            proceso.wait()
-            os.remove(playlist_path)
-            logging.info("⏹️ Transmisión finalizada")
+            # Limpieza
+            if os.path.exists(playlist_path):
+                os.remove(playlist_path)
+            
+            logging.info("⏹️ Ciclo completado\n")
             
         except Exception as e:
-            logging.error(f"Error: {str(e)}")
+            logging.error(f"Error crítico: {str(e)}")
             time.sleep(60)
 
 @app.route('/health')
