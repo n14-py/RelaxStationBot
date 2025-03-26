@@ -23,7 +23,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 
-# Configuración
+# Configuración de entorno
 RTMP_URL = os.getenv("RTMP_URL")
 MEDIOS_URL = "https://raw.githubusercontent.com/n14-py/RelaxStationBot/master/medios.json"
 YOUTUBE_CREDS = {
@@ -35,6 +35,7 @@ YOUTUBE_CREDS = {
 # Directorio temporal
 TEMP_DIR = tempfile.gettempdir()
 
+# Palabras clave para títulos
 PALABRAS_CLAVE = {
     'lluvia': ['lluvia', 'rain', 'storm'],
     'fuego': ['fuego', 'fire', 'chimenea'],
@@ -47,23 +48,34 @@ class DescargadorDrive:
     @staticmethod
     def descargar_archivo(url, destino):
         try:
-            # Usar wget para manejar cookies y redirecciones
-            comando = [
-                "wget",
-                "--no-check-certificate",
-                "-O", destino,
-                url
-            ]
-            result = subprocess.run(comando, capture_output=True, text=True)
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
             
-            if result.returncode != 0:
-                logging.error(f"Error descarga: {result.stderr}")
-                return False
-                
-            return os.path.exists(destino)
+            session = requests.Session()
+            respuesta = session.get(url, headers=headers, stream=True, timeout=30)
+            respuesta.raise_for_status()
+
+            # Manejar confirmación de descarga grande
+            if "confirm=download" in respuesta.url:
+                confirm_key = re.findall(r"confirm=([\w-]+)", respuesta.url)[0]
+                file_id = re.findall(r'id=([\w-]+)', url)[0]
+                url = f"https://drive.google.com/uc?export=download&id={file_id}&confirm={confirm_key}"
+                respuesta = session.get(url, stream=True, timeout=30)
+
+            # Descargar archivo
+            with open(destino, 'wb') as f:
+                for chunk in respuesta.iter_content(chunk_size=1024*1024):
+                    if chunk:
+                        f.write(chunk)
+            
+            if os.path.exists(destino) and os.path.getsize(destino) > 1024:
+                logging.info(f"✅ Descarga exitosa: {os.path.basename(destino)}")
+                return True
+            return False
             
         except Exception as e:
-            logging.error(f"Error descargando {url}: {str(e)}")
+            logging.error(f"🚨 Error descarga ({url}): {str(e)}")
             return False
 
 class GestorContenido:
@@ -74,9 +86,16 @@ class GestorContenido:
         try:
             respuesta = requests.get(MEDIOS_URL, timeout=15)
             respuesta.raise_for_status()
-            return respuesta.json()
+            datos = respuesta.json()
+            
+            if not all(key in datos for key in ["videos", "musica", "sonidos_naturaleza"]):
+                raise ValueError("Estructura JSON inválida")
+                
+            logging.info("✅ Medios cargados correctamente")
+            return datos
+            
         except Exception as e:
-            logging.error(f"Error cargando medios: {str(e)}")
+            logging.error(f"🚨 Error cargando medios: {str(e)}")
             return {"videos": [], "musica": [], "sonidos_naturaleza": []}
     
     def actualizar_medios(self):
@@ -99,7 +118,7 @@ class YouTubeManager:
             creds.refresh(Request())
             return build('youtube', 'v3', credentials=creds)
         except Exception as e:
-            logging.error(f"Error autenticación YouTube: {str(e)}")
+            logging.error(f"🚨 Error autenticación YouTube: {str(e)}")
             return None
     
     def generar_miniatura(self, video_path):
@@ -113,10 +132,10 @@ class YouTubeManager:
                 "-vframes", "1",
                 "-q:v", "2",
                 output_path
-            ], check=True)
+            ], check=True, capture_output=True)
             return output_path
-        except Exception as e:
-            logging.error(f"Error miniatura: {str(e)}")
+        except subprocess.CalledProcessError as e:
+            logging.error(f"🚨 Error miniatura: {e.stderr.decode()}")
             return None
     
     def actualizar_transmision(self, titulo, video_path):
@@ -130,7 +149,7 @@ class YouTubeManager:
             ).execute()
             
             if not broadcasts.get('items'):
-                logging.error("Crea una transmisión ACTIVA en YouTube Studio primero!")
+                logging.error("🚨 ¡Crea una transmisión ACTIVA en YouTube Studio primero!")
                 return
             
             broadcast_id = broadcasts['items'][0]['id']
@@ -150,17 +169,17 @@ class YouTubeManager:
             
             # Actualizar miniatura
             thumbnail_path = self.generar_miniatura(video_path)
-            if thumbnail_path:
+            if thumbnail_path and os.path.exists(thumbnail_path):
                 self.youtube.thumbnails().set(
                     videoId=broadcast_id,
                     media_body=thumbnail_path
                 ).execute()
                 os.remove(thumbnail_path)
             
-            logging.info(f"Actualizado YouTube: {titulo}")
+            logging.info(f"📡 Actualizado YouTube: {titulo}")
             
         except Exception as e:
-            logging.error(f"Error YouTube API: {str(e)}")
+            logging.error(f"🚨 Error YouTube API: {str(e)}")
 
 def generar_titulo(nombre_video):
     nombre = nombre_video.lower()
@@ -181,11 +200,6 @@ def descargar_y_transmitir(video_url, audio_url):
                 
             logging.info("⬇️ Descargando audio...")
             if not DescargadorDrive.descargar_archivo(audio_url, audio_path):
-                return None
-                
-            # Verificar archivos
-            if not os.path.getsize(video_path) > 1024 or not os.path.getsize(audio_path) > 1024:
-                logging.error("Archivos descargados inválidos")
                 return None
                 
             # Iniciar transmisión
@@ -212,10 +226,12 @@ def descargar_y_transmitir(video_url, audio_url):
                 "-f", "flv",
                 RTMP_URL
             ]
-            return subprocess.Popen(cmd)
+            proceso = subprocess.Popen(cmd, stderr=subprocess.PIPE)
+            logging.info("🎥 Transmisión iniciada")
+            return proceso
             
         except Exception as e:
-            logging.error(f"Error en transmisión: {str(e)}")
+            logging.error(f"🚨 Error en transmisión: {str(e)}")
             return None
 
 def ciclo_transmision():
@@ -226,11 +242,12 @@ def ciclo_transmision():
     
     while True:
         try:
+            # Rotar cada 8 horas
             if (datetime.now() - tiempo_inicio).total_seconds() >= 28800:
                 fase = (fase + 1) % 3
                 tiempo_inicio = datetime.now()
                 gestor.actualizar_medios()
-                logging.info(f"🔄 Rotando fase: {['Música', 'Naturaleza', 'Combinado'][fase]}")
+                logging.info(f"🔄 Rotando a fase: {['Música', 'Naturaleza', 'Combinado'][fase]}")
             
             # Selección de contenido
             if fase == 0:
@@ -245,7 +262,7 @@ def ciclo_transmision():
             
             titulo = generar_titulo(video['name'])
             
-            logging.info(f"▶️ Iniciando transmisión:\nVideo: {video['name']}\nAudio: {audio['name']}")
+            logging.info(f"▶️ Iniciando transmisión:\n📹 Video: {video['name']}\n🎵 Audio: {audio['name']}")
             proceso = descargar_y_transmitir(video['url'], audio['url'])
             
             if not proceso:
@@ -263,8 +280,10 @@ def ciclo_transmision():
             proceso.wait()
             
         except Exception as e:
-            logging.error(f"Error ciclo: {str(e)}")
+            logging.error(f"🚨 Error en ciclo: {str(e)}")
             time.sleep(60)
+            if 'proceso' in locals() and proceso:
+                proceso.terminate()
 
 @app.route('/health')
 def health_check():
