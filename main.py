@@ -1,4 +1,3 @@
-
 import os
 import random
 import subprocess
@@ -183,12 +182,12 @@ def generar_titulo(nombre_video, fase):
     nombre = nombre_video.lower()
     ubicacion = next((p for p in ['Cabaña', 'Sala', 'Cueva', 'Montaña', 'Departamento', 'Cafetería'] if p.lower() in nombre), 'Entorno')
     
-    if fase == 0:  # Música
+    if fase == 0:
         return f"{ubicacion} • Música Relajante 🌿 24/7"
-    elif fase == 1:  # Naturaleza
+    elif fase == 1:
         tema = next((t for t, keys in PALABRAS_CLAVE.items() if any(k in nombre for k in keys)), 'Naturaleza')
         return f"{ubicacion} • Sonidos de {tema.capitalize()} 🌿 24/7"
-    else:  # Combinado
+    else:
         tema = next((t for t, keys in PALABRAS_CLAVE.items() if any(k in nombre for k in keys)), 'Naturaleza')
         return f"{ubicacion} • Música y Sonidos de {tema.capitalize()} 🌿 24/7"
 
@@ -198,11 +197,13 @@ def ciclo_transmision():
     
     while True:
         try:
-            # Seleccionar fase
-            fase = random.choice([0, 1, 2])  # 0=Música, 1=Naturaleza, 2=Combinado
+            # Selección de fase y video
+            fase = random.choice([0, 1, 2])
             video = random.choice(gestor.medios['videos'])
-            
-            # Configurar contenido según fase
+            logging.info(f"🎥 Video seleccionado: {video['name']}")
+            logging.info(f"🔁 Fase seleccionada: {fase}")
+
+            # Configuración de contenido
             if fase == 0:
                 audios = [a for a in gestor.medios['musica'] if a['local_path']]
                 tipo_contenido = "Música Relajante"
@@ -210,78 +211,131 @@ def ciclo_transmision():
                 audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
                 tipo_contenido = "Sonidos de Naturaleza"
             else:
-                audios = [a for a in gestor.medios['musica'] + gestor.medios['sonidos_naturaleza'] if a['local_path']]
-                tipo_contenido = "Música y Sonidos Naturales"
-            
-            if not audios:
-                logging.error("No hay audios válidos disponibles")
+                # Fase combinada
+                naturaleza = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
+                if not naturaleza:
+                    raise ValueError("No hay sonidos de naturaleza")
+                naturaleza_audio = random.choice(naturaleza)
+                musica = [a for a in gestor.medios['musica'] if a['local_path']]
+                random.shuffle(musica)
+                tipo_contenido = "Combinado Música/Naturaleza"
+
+            if fase != 2 and (not audios or len(audios) == 0):
+                logging.error("No hay audios disponibles")
                 time.sleep(60)
                 continue
-            
-            random.shuffle(audios)
-            
-            # Generar playlist
-            playlist_path = "/tmp/playlist.txt"
-            with open(playlist_path, 'w') as f:
-                for audio in audios:
-                    if audio['local_path']:
-                        f.write(f"file '{os.path.abspath(audio['local_path'])}'\n")
-            
-            # Generar título según fase
+
+            # Generar playlists
+            if fase == 2:
+                # Playlist para sonido de naturaleza en bucle
+                playlist_naturaleza = "/tmp/naturaleza.txt"
+                with open(playlist_naturaleza, 'w') as f:
+                    f.write(f"file '{naturaleza_audio['local_path']}'\n")
+                
+                # Playlist para música aleatoria
+                playlist_musica = "/tmp/musica.txt"
+                with open(playlist_musica, 'w') as f:
+                    for track in musica:
+                        f.write(f"file '{track['local_path']}'\n")
+            else:
+                playlist_path = "/tmp/playlist.txt"
+                with open(playlist_path, 'w') as f:
+                    for audio in audios:
+                        f.write(f"file '{audio['local_path']}'\n")
+
+            # Generar título
             titulo = generar_titulo(video['name'], fase)
-            
-            # Actualizar YouTube
-            if youtube.youtube:
-                youtube.actualizar_transmision(titulo, video['url'])
-            
-            # Comando FFmpeg
-            cmd = [
-                "ffmpeg",
-                "-loglevel", "error",
-                "-re",
-                "-stream_loop", "-1",
-                "-i", video['url'],
-                "-f", "concat",
-                "-safe", "0",
-                "-protocol_whitelist", "file,http,https,tcp,tls",
-                "-stream_loop", "-1",
-                "-i", playlist_path,
-                "-map", "0:v:0",
-                "-map", "1:a:0",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-b:v", "2500k",
-                "-maxrate", "3000k",
-                "-bufsize", "5000k",
-                "-pix_fmt", "yuv420p",
-                "-g", "60",
-                "-r", "30",
-                "-c:a", "aac",
-                "-b:a", "160k",
-                "-ar", "48000",
-                "-t", "28800",
-                "-f", "flv",
-                RTMP_URL
-            ]
-            
-            # Log detallado
-            logging.info(f"""
-            🎬 INICIANDO TRANSMISIÓN 🎬
-            📺 Video: {video['name']}
-            🎵 Tipo: {tipo_contenido}
-            🎶 Audios: {len(audios)} pistas
-            🏷️ Título actualizado: {titulo}
-            ⏳ Duración: 8 horas
-            """)
-            
+            logging.info(f"🏷️ Título generado: {titulo}")
+
+            # Construir comando FFmpeg
+            if fase == 2:
+                cmd = [
+                    "ffmpeg",
+                    "-loglevel", "error",
+                    "-re",
+                    "-stream_loop", "-1",
+                    "-i", video['url'],
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-stream_loop", "-1",
+                    "-i", playlist_naturaleza,
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", playlist_musica,
+                    "-filter_complex", "[1:a][2:a]amix=inputs=2:duration=longest[a]",
+                    "-map", "0:v:0",
+                    "-map", "[a]",
+                    "-c:v", "libx264",
+                    "-preset", "ultrafast",
+                    "-b:v", "2500k",
+                    "-maxrate", "3000k",
+                    "-bufsize", "5000k",
+                    "-pix_fmt", "yuv420p",
+                    "-g", "60",
+                    "-r", "30",
+                    "-c:a", "aac",
+                    "-b:a", "160k",
+                    "-ar", "48000",
+                    "-t", "28800",
+                    "-f", "flv",
+                    RTMP_URL
+                ]
+            else:
+                cmd = [
+                    "ffmpeg",
+                    "-loglevel", "error",
+                    "-re",
+                    "-stream_loop", "-1",
+                    "-i", video['url'],
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-protocol_whitelist", "file,http,https,tcp,tls",
+                    "-stream_loop", "-1",
+                    "-i", playlist_path,
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
+                    "-c:v", "libx264",
+                    "-preset", "ultrafast",
+                    "-b:v", "2500k",
+                    "-maxrate", "3000k",
+                    "-bufsize", "5000k",
+                    "-pix_fmt", "yuv420p",
+                    "-g", "60",
+                    "-r", "30",
+                    "-c:a", "aac",
+                    "-b:a", "160k",
+                    "-ar", "48000",
+                    "-t", "28800",
+                    "-f", "flv",
+                    RTMP_URL
+                ]
+
+            # Iniciar transmisión
+            logging.info("🚀 Iniciando stream...")
             proceso = subprocess.Popen(cmd)
+            
+            # Esperar 30 segundos para asegurar conexión
+            time.sleep(30)
+            logging.info("🔴 Stream activo")
+            
+            # Actualizar YouTube después de iniciar
+            if youtube.youtube:
+                logging.info("🔄 Actualizando título en YouTube...")
+                youtube.actualizar_transmision(titulo, video['url'])
+
+            # Esperar finalización
             proceso.wait()
-            
-            if os.path.exists(playlist_path):
+            logging.info("⏹️ Transmisión finalizada. Reiniciando...")
+
+            # Limpiar archivos temporales
+            if fase == 2:
+                os.remove(playlist_naturaleza)
+                os.remove(playlist_musica)
+            else:
                 os.remove(playlist_path)
-            
+
         except Exception as e:
-            logging.error(f"Error en transmisión: {str(e)}")
+            logging.error(f"Error en ciclo: {str(e)}")
             time.sleep(60)
 
 @app.route('/health')
