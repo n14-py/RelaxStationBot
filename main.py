@@ -46,26 +46,42 @@ PALABRAS_CLAVE = {
 
 class DescargadorDrive:
     @staticmethod
+    def parsear_id_drive(url):
+        """Extrae el ID de archivo de Google Drive desde cualquier formato de URL"""
+        patterns = [
+            r'/file/d/([a-zA-Z0-9_-]+)',
+            r'id=([a-zA-Z0-9_-]+)',
+            r'/([a-zA-Z0-9_-]+)/view'
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, url)
+            if match:
+                return match.group(1)
+        return None
+
+    @staticmethod
     def descargar_archivo(url, destino):
         try:
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-            }
+            file_id = DescargadorDrive.parsear_id_drive(url)
+            if not file_id:
+                raise ValueError("URL de Google Drive no válida")
+                
+            download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
             
             session = requests.Session()
-            respuesta = session.get(url, headers=headers, stream=True, timeout=30)
-            respuesta.raise_for_status()
+            respuesta = session.get(download_url, stream=True, timeout=30)
+            
+            # Manejar confirmación para archivos grandes
+            for key, value in respuesta.cookies.items():
+                if key.startswith('download_warning'):
+                    confirm = value
+                    download_url = f"https://drive.google.com/uc?export=download&id={file_id}&confirm={confirm}"
+                    respuesta = session.get(download_url, stream=True, timeout=30)
+                    break
 
-            # Manejar confirmación de descarga grande
-            if "confirm=download" in respuesta.url:
-                confirm_key = re.findall(r"confirm=([\w-]+)", respuesta.url)[0]
-                file_id = re.findall(r'id=([\w-]+)', url)[0]
-                url = f"https://drive.google.com/uc?export=download&id={file_id}&confirm={confirm_key}"
-                respuesta = session.get(url, stream=True, timeout=30)
-
-            # Descargar archivo
+            # Descargar contenido
             with open(destino, 'wb') as f:
-                for chunk in respuesta.iter_content(chunk_size=1024*1024):
+                for chunk in respuesta.iter_content(chunk_size=32768):
                     if chunk:
                         f.write(chunk)
             
@@ -124,15 +140,19 @@ class YouTubeManager:
     def generar_miniatura(self, video_path):
         try:
             output_path = os.path.join(TEMP_DIR, "miniatura.jpg")
-            subprocess.run([
-                "ffmpeg",
-                "-y",
-                "-ss", "00:00:05",
-                "-i", video_path,
-                "-vframes", "1",
-                "-q:v", "2",
-                output_path
-            ], check=True, capture_output=True)
+            result = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-ss", "00:00:05",
+                    "-i", video_path,
+                    "-vframes", "1",
+                    "-q:v", "2",
+                    output_path
+                ],
+                capture_output=True,
+                check=True
+            )
             return output_path
         except subprocess.CalledProcessError as e:
             logging.error(f"🚨 Error miniatura: {e.stderr.decode()}")
@@ -239,6 +259,15 @@ def ciclo_transmision():
     youtube = YouTubeManager()
     fase = 0
     tiempo_inicio = datetime.now()
+    
+    # Diagnóstico inicial
+    logging.info("=== DIAGNÓSTICO INICIAL ===")
+    try:
+        logging.info(f"FFmpeg versión: {subprocess.check_output(['ffmpeg', '-version'])}")
+    except Exception as e:
+        logging.error(f"🚨 Error FFmpeg: {str(e)}")
+    logging.info(f"Directorio temporal: {TEMP_DIR} (Escritura: {os.access(TEMP_DIR, os.W_OK)})")
+    logging.info(f"RTMP_URL: {'✅ Configurada' if RTMP_URL else '🚨 NO CONFIGURADA'}")
     
     while True:
         try:
