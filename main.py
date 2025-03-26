@@ -1,5 +1,4 @@
 import os
-import re
 import random
 import subprocess
 import logging
@@ -23,7 +22,7 @@ logging.basicConfig(
 )
 
 # Configuración
-RTMP_URL = os.getenv("RTMP_URL")  # URL de YouTube
+RTMP_URL = os.getenv("RTMP_URL")
 MEDIOS_URL = "https://raw.githubusercontent.com/n14-py/RelaxStationBot/master/medios.json"
 YOUTUBE_CREDS = {
     'client_id': os.getenv("YOUTUBE_CLIENT_ID"),
@@ -31,7 +30,6 @@ YOUTUBE_CREDS = {
     'refresh_token': os.getenv("YOUTUBE_REFRESH_TOKEN")
 }
 
-# Palabras clave para títulos
 PALABRAS_CLAVE = {
     'lluvia': ['lluvia', 'rain', 'storm'],
     'fuego': ['fuego', 'fire', 'chimenea'],
@@ -42,24 +40,46 @@ PALABRAS_CLAVE = {
 
 class GestorContenido:
     def __init__(self):
+        self.media_cache_dir = "./media_cache"
+        os.makedirs(self.media_cache_dir, exist_ok=True)
         self.medios = self.cargar_medios()
     
+    def descargar_audio(self, url):
+        try:
+            nombre_archivo = hashlib.md5(url.encode()).hexdigest() + os.path.splitext(url)[1]
+            ruta_local = os.path.join(self.media_cache_dir, nombre_archivo)
+            
+            if not os.path.exists(ruta_local):
+                respuesta = requests.get(url, stream=True, timeout=30)
+                respuesta.raise_for_status()
+                with open(ruta_local, 'wb') as f:
+                    for chunk in respuesta.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            
+            return ruta_local
+        except Exception as e:
+            logging.error(f"Error descargando audio: {str(e)}")
+            return url  # Fallback a URL directa
+    
     def cargar_medios(self):
-        try:  # <- ¡Faltaba indentación aquí!
+        try:
             respuesta = requests.get(MEDIOS_URL, timeout=10)
             respuesta.raise_for_status()
             datos = respuesta.json()
             
             if not all(key in datos for key in ["videos", "musica", "sonidos_naturaleza"]):
                 raise ValueError("Estructura JSON inválida")
-                
-            logging.info("✅ Medios cargados correctamente")
-            return datos
             
+            # Descargar toda la música
+            for medio in datos['musica'] + datos['sonidos_naturaleza']:
+                medio['local_path'] = self.descargar_audio(medio['url'])
+            
+            logging.info("✅ Medios cargados y descargados")
+            return datos
         except Exception as e:
-            logging.error(f"🚨 Error crítico: {str(e)}")
+            logging.error(f"Error cargando medios: {str(e)}")
             return {"videos": [], "musica": [], "sonidos_naturaleza": []}
-    
+
     def actualizar_medios(self):
         self.medios = self.cargar_medios()
 
@@ -84,13 +104,11 @@ class YouTubeManager:
             return None
     
     def generar_miniatura(self, video_url):
-        # Extraer primer frame del video
         try:
             output_path = "/tmp/miniatura.jpg"
             subprocess.run([
                 "ffmpeg",
-                "-y",
-                "-ss", "00:00:01",
+                "-y", "-ss", "00:00:01",
                 "-i", video_url,
                 "-vframes", "1",
                 "-q:v", "2",
@@ -103,10 +121,7 @@ class YouTubeManager:
     
     def actualizar_transmision(self, titulo, video_url):
         try:
-            # Generar miniatura
             thumbnail_path = self.generar_miniatura(video_url)
-            
-            # Obtener transmisión activa
             broadcasts = self.youtube.liveBroadcasts().list(
                 part="id,snippet,status",
                 broadcastStatus="active"
@@ -118,7 +133,6 @@ class YouTubeManager:
             
             broadcast_id = broadcasts['items'][0]['id']
             
-            # Actualizar título
             self.youtube.liveBroadcasts().update(
                 part="snippet",
                 body={
@@ -131,7 +145,6 @@ class YouTubeManager:
                 }
             ).execute()
             
-            # Actualizar miniatura
             if thumbnail_path:
                 self.youtube.thumbnails().set(
                     videoId=broadcast_id,
@@ -140,7 +153,6 @@ class YouTubeManager:
                 os.remove(thumbnail_path)
             
             logging.info(f"Actualizado YouTube: {titulo}")
-            
         except Exception as e:
             logging.error(f"Error actualizando YouTube: {str(e)}")
 
@@ -153,44 +165,42 @@ def generar_titulo(nombre_video):
 def ciclo_transmision():
     gestor = GestorContenido()
     youtube = YouTubeManager()
-    fase = 0  # 0=música, 1=naturaleza, 2=combinado
-    tiempo_inicio = datetime.now()
     
     while True:
         try:
-            # Rotar cada 8 horas
-            if (datetime.now() - tiempo_inicio).total_seconds() >= 28800:
-                fase = (fase + 1) % 3
-                tiempo_inicio = datetime.now()
-                gestor.actualizar_medios()
-                logging.info(f"🔄 Rotando a fase: {['Música', 'Naturaleza', 'Combinado'][fase]}")
+            # Seleccionar fase cada 8 horas
+            fase = random.choice([0, 1, 2])  # Aleatorizar fase inicial
+            tiempo_inicio = datetime.now()
+            gestor.actualizar_medios()
             
-            # Seleccionar contenido
+            # Configurar contenido según fase
             if fase == 0:
-                video = random.choice(gestor.medios['videos'])
-                audio = random.choice(gestor.medios['musica'])
+                audios = gestor.medios['musica']
             elif fase == 1:
-                video = random.choice(gestor.medios['videos'])
-                audio = random.choice(gestor.medios['sonidos_naturaleza'])
+                audios = gestor.medios['sonidos_naturaleza']
             else:
-                video = random.choice(gestor.medios['videos'])
-                audio = random.choice(gestor.medios['musica'] + gestor.medios['sonidos_naturaleza'])
+                audios = gestor.medios['musica'] + gestor.medios['sonidos_naturaleza']
             
-            # Generar título automático
-            titulo = generar_titulo(video['name'])
+            video = random.choice(gestor.medios['videos'])
+            random.shuffle(audios)  # Mezclar audios inicialmente
             
-            # Actualizar YouTube
-            if youtube.youtube:
-                youtube.actualizar_transmision(titulo, video['url'])
-            
-            # Iniciar FFmpeg
+            # Generar lista de reproducción aleatoria infinita
+            playlist_path = "/tmp/playlist.txt"
+            with open(playlist_path, 'w') as f:
+                for audio in audios:
+                    f.write(f"file '{audio.get('local_path', audio['url'])}'\n")
+                f.write(f"file '{random.choice(audios).get('local_path', audio['url'])}'\n")  # Forzar bucle
+
+            # Configurar FFmpeg para 8 horas
             cmd = [
                 "ffmpeg",
                 "-loglevel", "error",
                 "-re",
                 "-stream_loop", "-1",
                 "-i", video['url'],
-                "-i", audio['url'],
+                "-f", "concat",
+                "-safe", "0",
+                "-i", playlist_path,
                 "-map", "0:v:0",
                 "-map", "1:a:0",
                 "-c:v", "libx264",
@@ -204,15 +214,19 @@ def ciclo_transmision():
                 "-c:a", "aac",
                 "-b:a", "160k",
                 "-ar", "48000",
+                "-t", "28800",  # 8 horas exactas
                 "-f", "flv",
                 RTMP_URL
             ]
             
-            logging.info(f"▶️ Iniciando transmisión:\nVideo: {video['name']}\nAudio: {audio['name']}")
+            logging.info(f"🎬 Iniciando ciclo de 8 horas\nVideo: {video['name']}\nAudios: {len(audios)} pistas mezcladas")
             
+            # Ejecutar transmisión
             proceso = subprocess.Popen(cmd)
-            time.sleep(28800)  # 8 horas
-            proceso.terminate()
+            proceso.wait()
+            
+            # Limpiar
+            os.remove(playlist_path)
             
         except Exception as e:
             logging.error(f"Error en transmisión: {str(e)}")
