@@ -14,6 +14,7 @@ RUN echo "deb http://deb.debian.org/debian bullseye main" > /etc/apt/sources.lis
     apt-get install -y --fix-missing \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
+    pip install gdown 
 
 # Configurar entorno
 WORKDIR /app
