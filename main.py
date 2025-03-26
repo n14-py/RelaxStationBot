@@ -253,85 +253,56 @@ def ciclo_transmision():
                     "-pix_fmt", "yuv420p",
                     "-g", "60",
                     "-r", "30",
-                    "-c:a", "aac",
-                    "-b:a", "160k",
-                    "-ar", "48000",
-                    "-t", "28800",
-                    "-f", "flv",
+                    "-tune", "film",
+                    "-s", "1280x720",
+                    "-y",
                     RTMP_URL
                 ]
-            else:  # Música o combinado
-                with open(playlist_path, 'w') as f:
-                    for audio in audios:
-                        if audio['local_path']:
-                            f.write(f"file '{os.path.abspath(audio['local_path'])}'\n")
                 
-                cmd = [
-                    "ffmpeg",
-                    "-loglevel", "error",
-                    "-re",
-                    "-stream_loop", "-1",
-                    "-i", video['url'],
-                    "-f", "concat",
-                    "-safe", "0",
-                    "-protocol_whitelist", "file,http,https,tcp,tls",
-                    "-i", playlist_path,
-                    "-map", "0:v:0",
-                    "-map", "1:a:0",
-                    "-c:v", "libx264",
-                    "-preset", "ultrafast",
-                    "-b:v", "2500k",
-                    "-maxrate", "3000k",
-                    "-bufsize", "5000k",
-                    "-pix_fmt", "yuv420p",
-                    "-g", "60",
-                    "-r", "30",
-                    "-c:a", "aac",
-                    "-b:a", "160k",
-                    "-ar", "48000",
-                    "-t", "28800",
-                    "-f", "flv",
-                    RTMP_URL
-                ]
+            else:
+                if fase == 0:
+                    with open(input_file, 'w') as f:
+                        for audio in audios:
+                            f.write(f"file '{os.path.abspath(audio['local_path'])}'\n")
+                    
+                    cmd = [
+                        "ffmpeg",
+                        "-loglevel", "error",
+                        "-re",
+                        "-stream_loop", "-1",
+                        "-i", video['url'],
+                        "-f", "concat",
+                        "-safe", "0",
+                        "-protocol_whitelist", "file,http,https,tcp,tls",
+                        "-i", input_file,
+                        "-map", "0:v:0",
+                        "-map", "1:a:0",
+                        "-c:v", "libx264",
+                        "-preset", "ultrafast",
+                        "-b:v", "2500k",
+                        "-maxrate", "3000k",
+                        "-bufsize", "5000k",
+                        "-pix_fmt", "yuv420p",
+                        "-g", "60",
+                        "-r", "30",
+                        "-tune", "film",
+                        "-s", "1280x720",
+                        "-y",
+                        RTMP_URL
+                    ]
             
-            # Iniciar transmisión primero
-            proceso = subprocess.Popen(cmd)
+            # Ejecutar transmisión
+            subprocess.run(cmd, check=True)
             
-            # Esperar 30 segundos para que el stream esté activo
-            time.sleep(30)
+            # Actualizar YouTube
+            youtube.actualizar_transmision(titulo, video['url'])
             
-            # Actualizar YouTube después de iniciado el stream
-            if youtube.youtube:
-                youtube.actualizar_transmision(titulo, video['url'])
-            
-            # Log detallado
-            logging.info(f"""
-            🎬 INICIANDO TRANSMISIÓN 🎬
-            📺 Video: {video['name']}
-            🎵 Tipo: {tipo_contenido}
-            🌧️ Sonido base: {sonido_naturaleza['name'] if fase in [1,2] else 'N/A'}
-            🎶 Audios: {len(audios)} pistas
-            🏷️ Título actualizado: {titulo}
-            ⏳ Duración: 8 horas
-            """)
-            
-            proceso.wait()
-            
-            # Limpieza
-            if os.path.exists(playlist_path):
-                os.remove(playlist_path)
-            if os.path.exists(input_file):
-                os.remove(input_file)
-            
+            time.sleep(60)  # Esperar un minuto para cambiar video y música
         except Exception as e:
-            logging.error(f"Error en transmisión: {str(e)}")
+            logging.error(f"Error en ciclo de transmisión: {str(e)}")
             time.sleep(60)
 
-@app.route('/health')
-def health_check():
-    return "OK", 200
+# Ejecutando el ciclo de transmisión en vivo
+if __name__ == '__main__':
+    ciclo_transmision()
 
-if __name__ == "__main__":
-    import threading
-    threading.Thread(target=ciclo_transmision, daemon=True).start()
-    serve(app, host='0.0.0.0', port=10000)
