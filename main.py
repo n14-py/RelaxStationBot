@@ -298,21 +298,27 @@ def ciclo_transmision():
                 time.sleep(60)
                 continue
                 
-            # Esperar inicialización
-            time.sleep(30)
+            # Esperar 10 minutos antes de actualizar
+            logging.info("⏳ Esperando 10 minutos para actualizar YouTube...")
+            time.sleep(600)  # 10 minutos = 600 segundos
             
-            # Actualizar YouTube
+            # Actualizar YouTube con nueva descarga
             if youtube.youtube:
-                youtube.actualizar_transmision(titulo, os.path.join(TEMP_DIR, "video.mp4"))
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    video_path = os.path.join(tmp_dir, "temp_video.mp4")
+                    if DescargadorDrive.descargar_archivo(video['url'], video_path):
+                        youtube.actualizar_transmision(titulo, video_path)
             
-            # Mantener transmisión
-            proceso.wait()
+            # Mantener transmisión por 7h50m restantes
+            tiempo_restante = 28800 - 600  # 7 horas 50 minutos
+            time.sleep(tiempo_restante)
+            proceso.terminate()
             
         except Exception as e:
             logging.error(f"🚨 Error en ciclo: {str(e)}")
-            time.sleep(60)
             if 'proceso' in locals() and proceso:
                 proceso.terminate()
+            time.sleep(60)
 
 @app.route('/health')
 def health_check():
