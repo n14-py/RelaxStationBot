@@ -1,4 +1,3 @@
-
 import os
 import random
 import subprocess
@@ -47,24 +46,32 @@ class GestorContenido:
         os.makedirs(self.media_cache_dir, exist_ok=True, mode=0o777)
         self.medios = self.cargar_medios()
     
-    def obtener_extension_segura(self, url):
+    def convertir_audio(self, input_path):
+        output_path = os.path.splitext(input_path)[0] + "_converted.aac"
+        if os.path.exists(output_path):
+            return output_path
+            
         try:
-            parsed = urlparse(url)
-            path = parsed.path
-            extension = os.path.splitext(path)[1]
-            return extension if extension else '.mp3'
-        except:
-            return '.mp3'
+            subprocess.run([
+                "ffmpeg", "-y", "-i", input_path,
+                "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
+                "-hide_banner", "-loglevel", "error",
+                output_path
+            ], check=True)
+            return output_path
+        except Exception as e:
+            logging.error(f"Error convirtiendo audio: {str(e)}")
+            return None
 
     def descargar_audio(self, url):
         try:
             nombre_hash = hashlib.md5(url.encode()).hexdigest()
-            extension = self.obtener_extension_segura(url)
-            nombre_archivo = f"{nombre_hash}{extension}"
+            extension = os.path.splitext(urlparse(url).path)[1]
+            nombre_archivo = f"{nombre_hash}{extension if extension else '.mp3'}"
             ruta_local = os.path.join(self.media_cache_dir, nombre_archivo)
             
             if os.path.exists(ruta_local) and os.path.getsize(ruta_local) > 1024:
-                return ruta_local
+                return self.convertir_audio(ruta_local)
             
             respuesta = requests.get(url, stream=True, timeout=30)
             respuesta.raise_for_status()
@@ -73,10 +80,7 @@ class GestorContenido:
                 for chunk in respuesta.iter_content(chunk_size=8192):
                     f.write(chunk)
             
-            if os.path.getsize(ruta_local) == 0:
-                raise ValueError("Archivo descargado vacío")
-            
-            return ruta_local
+            return self.convertir_audio(ruta_local)
         except Exception as e:
             logging.error(f"Error descargando {url}: {str(e)}")
             return None
@@ -87,24 +91,16 @@ class GestorContenido:
             respuesta.raise_for_status()
             datos = respuesta.json()
             
-            if not all(key in datos for key in ["videos", "musica", "sonidos_naturaleza"]):
-                raise ValueError("Estructura JSON inválida")
-            
-            for medio in datos['musica'] + datos['sonidos_naturaleza']:
-                local_path = self.descargar_audio(medio['url'])
-                if local_path and os.path.exists(local_path):
-                    medio['local_path'] = local_path
-                else:
-                    medio['local_path'] = None
+            for categoria in ['musica', 'sonidos_naturaleza']:
+                for medio in datos[categoria]:
+                    local_path = self.descargar_audio(medio['url'])
+                    medio['local_path'] = local_path if local_path and os.path.exists(local_path) else None
             
             logging.info("✅ Medios verificados y listos")
             return datos
         except Exception as e:
             logging.error(f"Error cargando medios: {str(e)}")
             return {"videos": [], "musica": [], "sonidos_naturaleza": []}
-
-    def actualizar_medios(self):
-        self.medios = self.cargar_medios()
 
 class YouTubeManager:
     def __init__(self):
@@ -113,7 +109,6 @@ class YouTubeManager:
     def autenticar(self):
         try:
             creds = Credentials(
-                token=None,
                 refresh_token=YOUTUBE_CREDS['refresh_token'],
                 client_id=YOUTUBE_CREDS['client_id'],
                 client_secret=YOUTUBE_CREDS['client_secret'],
@@ -130,11 +125,13 @@ class YouTubeManager:
         try:
             output_path = "/tmp/miniatura.jpg"
             subprocess.run([
-                "ffmpeg",
-                "-y", "-ss", "00:00:01",
+                "ffmpeg", "-y",
+                "-ss", "00:00:01",
                 "-i", video_url,
                 "-vframes", "1",
                 "-q:v", "2",
+                "-hide_banner",
+                "-loglevel", "error",
                 output_path
             ], check=True)
             return output_path
@@ -179,62 +176,80 @@ class YouTubeManager:
         except Exception as e:
             logging.error(f"Error actualizando YouTube: {str(e)}")
 
-def generar_titulo(nombre_video, fase):
-    nombre = nombre_video.lower()
-    ubicacion = next((p for p in ['Cabaña', 'Sala', 'Cueva', 'Montaña', 'Departamento', 'Cafetería'] if p.lower() in nombre), 'Entorno')
+def generar_titulo(nombre_video, fase, tema):
+    ubicacion = next((p for p in ['Cabaña', 'Sala', 'Cueva', 'Montaña', 'Departamento', 'Cafetería'] if p.lower() in nombre_video.lower()), 'Entorno')
     
-    if fase == 0:  # Música
+    if fase == 0:
         return f"{ubicacion} • Música Relajante 🌿 24/7"
-    elif fase == 1:  # Naturaleza
-        tema = next((t for t, keys in PALABRAS_CLAVE.items() if any(k in nombre for k in keys)), 'Naturaleza')
+    elif fase == 1:
         return f"{ubicacion} • Sonidos de {tema.capitalize()} 🌿 24/7"
-    else:  # Combinado
-        tema = next((t for t, keys in PALABRAS_CLAVE.items() if any(k in nombre for k in keys)), 'Naturaleza')
+    else:
         return f"{ubicacion} • Música y Sonidos de {tema.capitalize()} 🌿 24/7"
+
+def obtener_tema(nombre_video):
+    nombre = nombre_video.lower()
+    for tema, palabras in PALABRAS_CLAVE.items():
+        if any(p in nombre for p in palabras):
+            return tema
+    return 'Naturaleza'
 
 def ciclo_transmision():
     gestor = GestorContenido()
     youtube = YouTubeManager()
     
+    fase_actual = random.choice([0, 1, 2])
+    tiempo_inicio_fase = time.time()
+    tema_actual = "Naturaleza"
+    
     while True:
         try:
-            # Seleccionar fase
-            fase = random.choice([0, 1, 2])  # 0=Música, 1=Naturaleza, 2=Combinado
+            # Verificar si debe cambiar de fase
+            if (time.time() - tiempo_inicio_fase) >= 28800:  # 8 horas
+                fase_actual = random.choice([0, 1, 2])
+                tiempo_inicio_fase = time.time()
+            
+            # Seleccionar contenido
             video = random.choice(gestor.medios['videos'])
+            tema_actual = obtener_tema(video['name'])
             
             # Configurar contenido según fase
-            if fase == 0:
+            if fase_actual == 0:  # Solo música
                 audios = [a for a in gestor.medios['musica'] if a['local_path']]
-                tipo_contenido = "Música Relajante"
-            elif fase == 1:
-                audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
-                tipo_contenido = "Sonidos de Naturaleza"
-            else:
-                audios = [a for a in gestor.medios['musica'] + gestor.medios['sonidos_naturaleza'] if a['local_path']]
-                tipo_contenido = "Música y Sonidos Naturales"
+                filtro_audio = "[1:a]volume=0.8[audio]"
+                map_audio = "[audio]"
+                inputs = 1
+            elif fase_actual == 1:  # Solo naturaleza
+                audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path'] and tema_actual in a['name'].lower()]
+                filtro_audio = "[1:a]volume=0.8[audio]"
+                map_audio = "[audio]"
+                inputs = 1
+            else:  # Combinado
+                musica = [a for a in gestor.medios['musica'] if a['local_path']]
+                naturaleza = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path'] and tema_actual in a['name'].lower()]
+                if not musica or not naturaleza:
+                    continue
+                audios = musica + naturaleza
+                filtro_audio = "[1:a]volume=0.4[mus];[2:a]volume=0.8[nat];[mus][nat]amix=inputs=2:duration=longest[audio]"
+                map_audio = "[audio]"
+                inputs = 2
             
             if not audios:
-                logging.error("No hay audios válidos disponibles")
-                time.sleep(60)
                 continue
-            
-            random.shuffle(audios)
             
             # Generar playlist
             playlist_path = "/tmp/playlist.txt"
             with open(playlist_path, 'w') as f:
-                for audio in audios:
-                    if audio['local_path']:
-                        f.write(f"file '{os.path.abspath(audio['local_path'])}'\n")
+                for audio in audios[:inputs]:
+                    f.write(f"file '{audio['local_path']}'\n")
             
-            # Generar título según fase
-            titulo = generar_titulo(video['name'], fase)
+            # Generar título
+            titulo = generar_titulo(video['name'], fase_actual, tema_actual)
             
             # Actualizar YouTube
             if youtube.youtube:
                 youtube.actualizar_transmision(titulo, video['url'])
             
-            # Comando FFmpeg
+            # Construir comando FFmpeg
             cmd = [
                 "ffmpeg",
                 "-loglevel", "error",
@@ -243,11 +258,17 @@ def ciclo_transmision():
                 "-i", video['url'],
                 "-f", "concat",
                 "-safe", "0",
-                "-protocol_whitelist", "file,http,https,tcp,tls",
                 "-stream_loop", "-1",
                 "-i", playlist_path,
+            ]
+            
+            if fase_actual == 2:
+                cmd += ["-i", naturaleza[0]['local_path']]
+            
+            cmd += [
+                "-filter_complex", filtro_audio,
                 "-map", "0:v:0",
-                "-map", "1:a:0",
+                "-map", map_audio,
                 "-c:v", "libx264",
                 "-preset", "ultrafast",
                 "-b:v", "2500k",
@@ -259,7 +280,7 @@ def ciclo_transmision():
                 "-c:a", "aac",
                 "-b:a", "160k",
                 "-ar", "48000",
-                "-t", "28800",
+                "-t", "28800",  # 8 horas
                 "-f", "flv",
                 RTMP_URL
             ]
@@ -268,9 +289,10 @@ def ciclo_transmision():
             logging.info(f"""
             🎬 INICIANDO TRANSMISIÓN 🎬
             📺 Video: {video['name']}
-            🎵 Tipo: {tipo_contenido}
+            🎵 Fase: {'Música' if fase_actual == 0 else 'Naturaleza' if fase_actual == 1 else 'Combinado'}
+            🌿 Tema: {tema_actual.capitalize()}
             🎶 Audios: {len(audios)} pistas
-            🏷️ Título actualizado: {titulo}
+            🏷️ Título: {titulo}
             ⏳ Duración: 8 horas
             """)
             
