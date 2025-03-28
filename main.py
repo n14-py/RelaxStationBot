@@ -11,7 +11,6 @@ from google.oauth2.credentials import Credentials
 from flask import Flask
 from waitress import serve
 from urllib.parse import urlparse
-import threading
 
 app = Flask(__name__)
 
@@ -149,7 +148,8 @@ def ejecutar_transmision(video, audio, titulo):
     try:
         cmd = [
             "ffmpeg",
-            "-loglevel", "error",
+            "-loglevel", "verbose",  # Modificado para ver errores
+            "-re",
             "-stream_loop", "-1",
             "-i", video['url'],
             "-stream_loop", "-1",
@@ -172,7 +172,18 @@ def ejecutar_transmision(video, audio, titulo):
             RTMP_URL
         ]
         
-        proceso = subprocess.Popen(cmd)
+        # Ejecutar y capturar logs
+        proceso = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True
+        )
+        
+        # Monitorear salida en tiempo real
+        for line in proceso.stdout:
+            logging.info(line.strip())
+        
         proceso.wait()
         return True
     except Exception as e:
@@ -214,7 +225,7 @@ def ciclo_transmision():
             """)
             
             if ejecutar_transmision(video, audio, titulo):
-                logging.info("✅ Transmisión completada - Reiniciando...")
+                logging.info("✅ Transmisión completada - Reiniciando en 1 minuto...")
                 time.sleep(60)
             
         except Exception as e:
@@ -226,5 +237,7 @@ def health_check():
     return "OK", 200
 
 if __name__ == "__main__":
-    threading.Thread(target=ciclo_transmision, daemon=True).start()
+    # Ejecutar en primer plano para Render
+    from threading import Thread
+    Thread(target=ciclo_transmision, daemon=True).start()
     serve(app, host='0.0.0.0', port=10000)
