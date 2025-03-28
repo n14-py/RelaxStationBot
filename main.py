@@ -158,35 +158,36 @@ def ejecutar_transmision(video, audio):
         with open("audio.lst", "w") as f:
             f.write(f"file '{audio['local_path']}'\n" * 1000)
 
-        cmd = [
-            "ffmpeg",
-            "-loglevel", "info",  # Cambiado a info para más detalles
-            "-re",
-            "-f", "concat",
-            "-safe", "0",
-            "-protocol_whitelist", "file,http,https,tcp,tls",
-            "-stream_loop", "-1",
-            "-i", "video.lst",
-            "-f", "concat",
-            "-safe", "0",
-            "-stream_loop", "-1",
-            "-i", "audio.lst",
-            "-map", "0:v:0",
-            "-map", "1:a:0",
-            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease",
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-b:v", "5000k",
-            "-maxrate", "6000k",
-            "-bufsize", "10000k",
-            "-g", "60",
-            "-r", "30",
-            "-c:a", "aac",
-            "-b:a", "160k",
-            "-ar", "44100",
-            "-f", "flv",
-            RTMP_URL
-        ]
+cmd = [
+    "ffmpeg",
+    "-loglevel", "warning",  # Reduce la cantidad de logs para ahorrar recursos
+    "-re",
+    "-f", "concat",
+    "-safe", "0",
+    "-protocol_whitelist", "file,http,https,tcp,tls",
+    "-stream_loop", "-1",
+    "-i", "video.lst",
+    "-f", "concat",
+    "-safe", "0",
+    "-stream_loop", "-1",
+    "-i", "audio.lst",
+    "-map", "0:v:0",
+    "-map", "1:a:0",
+    "-vf", "scale=1280:720:force_original_aspect_ratio=decrease",  # Reducir resolución si es necesario
+    "-c:v", "libx264",
+    "-preset", "ultrafast",
+    "-b:v", "1200k",
+    "-maxrate", "1500k",
+    "-bufsize", "2500k",
+    "-g", "240",
+    "-r", "30",  # Mantener 30 FPS para estabilidad
+    "-c:a", "aac",
+    "-b:a", "96k",  # Reducir el bitrate de audio para ahorrar recursos
+    "-ar", "44100",
+    "-f", "flv",
+    RTMP_URL
+]
+
         
         proceso = subprocess.Popen(
             cmd,
