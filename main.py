@@ -6,6 +6,7 @@ import time
 import requests
 import hashlib
 import threading
+from datetime import datetime
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -145,35 +146,45 @@ def generar_titulo(nombre_video, categoria):
     ubicacion = next((p for p in ubicaciones if p.lower() in nombre_video.lower()), 'Entorno')
     return f"{ubicacion} • Sonidos de {categoria.capitalize()} 🌿 24/7"
 
-def ejecutar_transmision(video, audio, titulo):
+def ejecutar_transmision(video, audio):
     try:
+        # Crear listas de reproducción
+        with open("video.lst", "w") as f:
+            f.write(f"file '{video['url']}'\n" * 1000)  # 1000 repeticiones
+            
+        with open("audio.lst", "w") as f:
+            f.write(f"file '{audio['local_path']}'\n" * 1000)
+
         cmd = [
             "ffmpeg",
-            "-loglevel", "verbose",  # Modificado para ver errores
+            "-loglevel", "error",
             "-re",
+            "-f", "concat",
+            "-safe", "0",
+            "-protocol_whitelist", "file,http,https,tcp,tls",
             "-stream_loop", "-1",
-            "-i", video['url'],
+            "-i", "video.lst",
+            "-f", "concat",
+            "-safe", "0",
             "-stream_loop", "-1",
-            "-i", audio['local_path'],
+            "-i", "audio.lst",
             "-map", "0:v:0",
             "-map", "1:a:0",
-            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
+            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease",
             "-c:v", "libx264",
             "-preset", "fast",
-            "-b:v", "4000k",
-            "-maxrate", "5000k",
-            "-bufsize", "8000k",
+            "-b:v", "5000k",
+            "-maxrate", "6000k",
+            "-bufsize", "10000k",
             "-g", "60",
             "-r", "30",
             "-c:a", "aac",
             "-b:a", "160k",
             "-ar", "44100",
-            "-t", "28800",  # 8 horas exactas
             "-f", "flv",
             RTMP_URL
         ]
         
-        # Ejecutar y capturar logs
         proceso = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -181,15 +192,25 @@ def ejecutar_transmision(video, audio, titulo):
             universal_newlines=True
         )
         
-        # Monitorear salida en tiempo real
-        for line in proceso.stdout:
-            logging.info(line.strip())
-        
-        proceso.wait()
+        # Temporizador de 8 horas
+        start_time = time.time()
+        while proceso.poll() is None:
+            if time.time() - start_time >= 28800:  # 8 horas
+                proceso.terminate()
+                logging.info("🕒 Transmisión finalizada por tiempo")
+                break
+            time.sleep(60)
+            
         return True
+        
     except Exception as e:
         logging.error(f"Error FFmpeg: {str(e)}")
         return False
+    finally:
+        if os.path.exists("video.lst"):
+            os.remove("video.lst")
+        if os.path.exists("audio.lst"):
+            os.remove("audio.lst")
 
 def ciclo_transmision():
     gestor = GestorContenido()
@@ -197,25 +218,21 @@ def ciclo_transmision():
     
     while True:
         try:
-            # Selección de medios
             video = random.choice(gestor.medios['videos'])
             categoria = determinar_categoria(video['name'])
             audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
             
-            # Selección de audio con fallback
             audios_filtrados = [a for a in audios if any(p in a['name'].lower() for p in PALABRAS_CLAVE[categoria])]
             audio = random.choice(audios_filtrados) if audios_filtrados else random.choice(audios)
             
             titulo = generar_titulo(video['name'], categoria)
             
-            # Actualizar YouTube después de 5 minutos
             def actualizar_titulo():
                 time.sleep(300)
                 youtube.actualizar_transmision(titulo, video['url'])
             
             threading.Thread(target=actualizar_titulo, daemon=True).start()
             
-            # Iniciar transmisión
             logging.info(f"""
             🎬 INICIANDO TRANSMISIÓN 🎬
             📺 Video: {video['name']}
@@ -225,8 +242,8 @@ def ciclo_transmision():
             ⏳ Duración: 8 horas
             """)
             
-            if ejecutar_transmision(video, audio, titulo):
-                logging.info("✅ Transmisión completada - Reiniciando en 1 minuto...")
+            if ejecutar_transmision(video, audio):
+                logging.info("🔄 Reiniciando transmisión en 1 minuto...")
                 time.sleep(60)
             
         except Exception as e:
@@ -238,7 +255,5 @@ def health_check():
     return "OK", 200
 
 if __name__ == "__main__":
-    # Ejecutar en primer plano para Render
-    from threading import Thread
-    Thread(target=ciclo_transmision, daemon=True).start()
+    threading.Thread(target=ciclo_transmision, daemon=True).start()
     serve(app, host='0.0.0.0', port=10000)
