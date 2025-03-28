@@ -18,7 +18,7 @@ app = Flask(__name__)
 
 # Configuración logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Cambiado a DEBUG para más detalles
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler()]
 )
@@ -71,6 +71,9 @@ class GestorContenido:
                 "-ac", "2",
                 ruta_local
             ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            if not os.path.exists(ruta_local):  # Nueva verificación
+                raise Exception(f"Error de conversión: {url}")
             
             os.remove(temp_path)
             return ruta_local
@@ -150,14 +153,14 @@ def ejecutar_transmision(video, audio):
     try:
         # Crear listas de reproducción
         with open("video.lst", "w") as f:
-            f.write(f"file '{video['url']}'\n" * 1000)  # 1000 repeticiones
+            f.write(f"file '{video['url']}'\n" * 1000)
             
         with open("audio.lst", "w") as f:
             f.write(f"file '{audio['local_path']}'\n" * 1000)
 
         cmd = [
             "ffmpeg",
-            "-loglevel", "error",
+            "-loglevel", "info",  # Cambiado a info para más detalles
             "-re",
             "-f", "concat",
             "-safe", "0",
@@ -192,10 +195,21 @@ def ejecutar_transmision(video, audio):
             universal_newlines=True
         )
         
+        # Logs de FFmpeg en tiempo real
+        def leer_logs():
+            while True:
+                output = proceso.stdout.readline()
+                if output == '' and proceso.poll() is not None:
+                    break
+                if output:
+                    logging.debug(output.strip())
+        
+        threading.Thread(target=leer_logs, daemon=True).start()
+        
         # Temporizador de 8 horas
         start_time = time.time()
         while proceso.poll() is None:
-            if time.time() - start_time >= 28800:  # 8 horas
+            if time.time() - start_time >= 28800:
                 proceso.terminate()
                 logging.info("🕒 Transmisión finalizada por tiempo")
                 break
@@ -207,10 +221,9 @@ def ejecutar_transmision(video, audio):
         logging.error(f"Error FFmpeg: {str(e)}")
         return False
     finally:
-        if os.path.exists("video.lst"):
-            os.remove("video.lst")
-        if os.path.exists("audio.lst"):
-            os.remove("audio.lst")
+        for archivo in ["video.lst", "audio.lst"]:
+            if os.path.exists(archivo):
+                os.remove(archivo)
 
 def ciclo_transmision():
     gestor = GestorContenido()
