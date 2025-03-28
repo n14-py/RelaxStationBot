@@ -3,7 +3,6 @@ import random
 import subprocess
 import logging
 import time
-import json
 import requests
 import hashlib
 from datetime import datetime
@@ -50,18 +49,14 @@ class GestorContenido:
     def obtener_extension_segura(self, url):
         try:
             parsed = urlparse(url)
-            path = parsed.path
-            extension = os.path.splitext(path)[1].lower()
-            return extension if extension in ['.mp3', '.wav'] else '.mp3'
+            return os.path.splitext(parsed.path)[1].lower() or '.mp3'
         except:
             return '.mp3'
 
     def descargar_audio(self, url):
         try:
             nombre_hash = hashlib.md5(url.encode()).hexdigest()
-            extension = self.obtener_extension_segura(url)
-            nombre_archivo = f"{nombre_hash}.wav"  # Convertimos todo a WAV
-            ruta_local = os.path.join(self.media_cache_dir, nombre_archivo)
+            ruta_local = os.path.join(self.media_cache_dir, f"{nombre_hash}.wav")
             
             if os.path.exists(ruta_local):
                 try:
@@ -70,7 +65,7 @@ class GestorContenido:
                 except:
                     os.remove(ruta_local)
             
-            temp_path = os.path.join(self.media_cache_dir, f"temp_{nombre_hash}{extension}")
+            temp_path = os.path.join(self.media_cache_dir, f"temp_{nombre_hash}")
             
             respuesta = requests.get(url, stream=True, timeout=30)
             respuesta.raise_for_status()
@@ -79,11 +74,9 @@ class GestorContenido:
                 for chunk in respuesta.iter_content(chunk_size=8192):
                     f.write(chunk)
             
-            # Conversión a WAV para compatibilidad
             subprocess.run([
                 "ffmpeg",
-                "-y",
-                "-i", temp_path,
+                "-y", "-i", temp_path,
                 "-acodec", "pcm_s16le",
                 "-ar", "44100",
                 "-ac", "2",
@@ -94,8 +87,6 @@ class GestorContenido:
             return ruta_local
         except Exception as e:
             logging.error(f"Error procesando {url}: {str(e)}")
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
             return None
 
     def cargar_medios(self):
@@ -104,38 +95,30 @@ class GestorContenido:
             respuesta.raise_for_status()
             datos = respuesta.json()
             
-            if not all(key in datos for key in ["videos", "musica", "sonidos_naturaleza"]):
-                raise ValueError("Estructura JSON inválida")
-            
             for medio in datos['sonidos_naturaleza']:
-                local_path = self.descargar_audio(medio['url'])
-                medio['local_path'] = local_path if local_path else None
+                medio['local_path'] = self.descargar_audio(medio['url'])
             
             logging.info("✅ Medios verificados y listos")
             return datos
         except Exception as e:
             logging.error(f"Error cargando medios: {str(e)}")
-            return {"videos": [], "musica": [], "sonidos_naturaleza": []}
+            return {"videos": [], "sonidos_naturaleza": []}
 
 class YouTubeManager:
     def __init__(self):
         self.youtube = self.autenticar()
     
     def autenticar(self):
-        try:
-            creds = Credentials(
-                token=None,
-                refresh_token=YOUTUBE_CREDS['refresh_token'],
-                client_id=YOUTUBE_CREDS['client_id'],
-                client_secret=YOUTUBE_CREDS['client_secret'],
-                token_uri="https://oauth2.googleapis.com/token",
-                scopes=['https://www.googleapis.com/auth/youtube']
-            )
-            creds.refresh(Request())
-            return build('youtube', 'v3', credentials=creds)
-        except Exception as e:
-            logging.error(f"Error autenticación YouTube: {str(e)}")
-            return None
+        creds = Credentials(
+            token=None,
+            refresh_token=YOUTUBE_CREDS['refresh_token'],
+            client_id=YOUTUBE_CREDS['client_id'],
+            client_secret=YOUTUBE_CREDS['client_secret'],
+            token_uri="https://oauth2.googleapis.com/token",
+            scopes=['https://www.googleapis.com/auth/youtube']
+        )
+        creds.refresh(Request())
+        return build('youtube', 'v3', credentials=creds)
     
     def generar_miniatura(self, video_url):
         try:
@@ -149,8 +132,7 @@ class YouTubeManager:
                 output_path
             ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return output_path
-        except Exception as e:
-            logging.error(f"Error generando miniatura: {str(e)}")
+        except:
             return None
     
     def actualizar_transmision(self, titulo, video_url):
@@ -160,10 +142,6 @@ class YouTubeManager:
                 part="id,snippet,status",
                 broadcastStatus="active"
             ).execute()
-            
-            if not broadcasts.get('items'):
-                logging.error("¡Crea una transmisión ACTIVA en YouTube Studio primero!")
-                return
             
             broadcast_id = broadcasts['items'][0]['id']
             
@@ -179,7 +157,7 @@ class YouTubeManager:
                 }
             ).execute()
             
-            if thumbnail_path and os.path.exists(thumbnail_path):
+            if thumbnail_path:
                 self.youtube.thumbnails().set(
                     videoId=broadcast_id,
                     media_body=thumbnail_path
@@ -208,53 +186,43 @@ def ciclo_transmision():
     
     while True:
         try:
+            # Seleccionar 1 video y 1 audio
             video = random.choice(gestor.medios['videos'])
             categoria = determinar_categoria(video['name'])
             
-            palabras_clave = PALABRAS_CLAVE[categoria]
+            # Buscar audio correspondiente
             audios = [a for a in gestor.medios['sonidos_naturaleza'] 
-                     if a['local_path'] and any(p in a['name'].lower() for p in palabras_clave)]
+                     if a['local_path'] and any(p in a['name'].lower() for p in PALABRAS_CLAVE[categoria])]
             
             if not audios:
                 audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
-                logging.warning("Usando todos los sonidos disponibles")
             
-            random.shuffle(audios)
-            
-            playlist_path = "/tmp/playlist.txt"
-            with open(playlist_path, 'w') as f:
-                for audio in audios:
-                    f.write(f"file '{os.path.abspath(audio['local_path'])}'\n")
+            audio = random.choice(audios)
             
             titulo = generar_titulo(video['name'], categoria)
             
-            # Configuración optimizada 720p
+            # Configuración 1080p optimizada
             cmd = [
                 "ffmpeg",
                 "-loglevel", "error",
-                "-re",
                 "-stream_loop", "-1",
                 "-i", video['url'],
-                "-f", "concat",
-                "-safe", "0",
-                "-protocol_whitelist", "file,http,https,tcp,tls",
                 "-stream_loop", "-1",
-                "-i", playlist_path,
+                "-i", audio['local_path'],
                 "-map", "0:v:0",
                 "-map", "1:a:0",
-                "-vf", "scale=1280:720",  # Resolución 720p
+                "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
                 "-c:v", "libx264",
-                "-preset", "veryfast",    # Balance entre CPU y calidad
-                "-b:v", "1500k",          # Bitrate video
-                "-maxrate", "2000k",
-                "-bufsize", "3000k",
+                "-preset", "fast",
+                "-b:v", "4000k",
+                "-maxrate", "5000k",
+                "-bufsize", "8000k",
                 "-g", "60",
                 "-r", "30",
                 "-c:a", "aac",
-                "-b:a", "128k",           # Bitrate audio
+                "-b:a", "160k",
                 "-ar", "44100",
-                "-ac", "2",
-                "-t", "28800",
+                "-t", "28800",  # 8 horas exactas
                 "-f", "flv",
                 RTMP_URL
             ]
@@ -262,26 +230,26 @@ def ciclo_transmision():
             logging.info(f"""
             🎬 INICIANDO TRANSMISIÓN 🎬
             📺 Video: {video['name']}
+            🔉 Audio: {audio['name']}
             🌿 Categoría: {categoria}
-            🎶 Audios seleccionados: {len(audios)} pistas
-            🏷️ Título programado: {titulo}
-            ⚙️ Configuración: 720p @ 1500kbps
+            🏷️ Título: {titulo}
+            ⚙️ Configuración: 1080p @ 4000kbps
             ⏳ Duración: 8 horas
             """)
             
-            proceso = subprocess.Popen(cmd)
-            
+            # Actualizar YouTube después de 5 minutos
             def actualizar_youtube():
-                time.sleep(300)  # 5 minutos
-                if youtube.youtube:
-                    youtube.actualizar_transmision(titulo, video['url'])
+                time.sleep(300)
+                youtube.actualizar_transmision(titulo, video['url'])
             
             threading.Thread(target=actualizar_youtube, daemon=True).start()
             
+            # Ejecutar transmisión completa
+            proceso = subprocess.Popen(cmd)
             proceso.wait()
             
-            if os.path.exists(playlist_path):
-                os.remove(playlist_path)
+            # Esperar a que termine completamente
+            time.sleep(60)  # Pausa entre transmisiones
             
         except Exception as e:
             logging.error(f"Error en transmisión: {str(e)}")
