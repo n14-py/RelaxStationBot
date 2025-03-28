@@ -51,8 +51,8 @@ class GestorContenido:
         try:
             parsed = urlparse(url)
             path = parsed.path
-            extension = os.path.splitext(path)[1]
-            return extension if extension else '.mp3'
+            extension = os.path.splitext(path)[1].lower()
+            return extension if extension in ['.mp3', '.wav'] else '.mp3'
         except:
             return '.mp3'
 
@@ -60,25 +60,42 @@ class GestorContenido:
         try:
             nombre_hash = hashlib.md5(url.encode()).hexdigest()
             extension = self.obtener_extension_segura(url)
-            nombre_archivo = f"{nombre_hash}{extension}"
+            nombre_archivo = f"{nombre_hash}.wav"  # Convertimos todo a WAV
             ruta_local = os.path.join(self.media_cache_dir, nombre_archivo)
             
-            if os.path.exists(ruta_local) and os.path.getsize(ruta_local) > 1024:
-                return ruta_local
+            if os.path.exists(ruta_local):
+                try:
+                    subprocess.run(["ffprobe", ruta_local], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return ruta_local
+                except:
+                    os.remove(ruta_local)
+            
+            temp_path = os.path.join(self.media_cache_dir, f"temp_{nombre_hash}{extension}")
             
             respuesta = requests.get(url, stream=True, timeout=30)
             respuesta.raise_for_status()
             
-            with open(ruta_local, 'wb') as f:
+            with open(temp_path, 'wb') as f:
                 for chunk in respuesta.iter_content(chunk_size=8192):
                     f.write(chunk)
             
-            if os.path.getsize(ruta_local) == 0:
-                raise ValueError("Archivo descargado vacío")
+            # Conversión a WAV para compatibilidad
+            subprocess.run([
+                "ffmpeg",
+                "-y",
+                "-i", temp_path,
+                "-acodec", "pcm_s16le",
+                "-ar", "44100",
+                "-ac", "2",
+                ruta_local
+            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             
+            os.remove(temp_path)
             return ruta_local
         except Exception as e:
-            logging.error(f"Error descargando {url}: {str(e)}")
+            logging.error(f"Error procesando {url}: {str(e)}")
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
             return None
 
     def cargar_medios(self):
@@ -92,19 +109,13 @@ class GestorContenido:
             
             for medio in datos['sonidos_naturaleza']:
                 local_path = self.descargar_audio(medio['url'])
-                if local_path and os.path.exists(local_path):
-                    medio['local_path'] = local_path
-                else:
-                    medio['local_path'] = None
+                medio['local_path'] = local_path if local_path else None
             
             logging.info("✅ Medios verificados y listos")
             return datos
         except Exception as e:
             logging.error(f"Error cargando medios: {str(e)}")
             return {"videos": [], "musica": [], "sonidos_naturaleza": []}
-
-    def actualizar_medios(self):
-        self.medios = self.cargar_medios()
 
 class YouTubeManager:
     def __init__(self):
@@ -131,12 +142,12 @@ class YouTubeManager:
             output_path = "/tmp/miniatura.jpg"
             subprocess.run([
                 "ffmpeg",
-                "-y", "-ss", "00:00:01",
+                "-y", "-ss", "00:00:03",
                 "-i", video_url,
                 "-vframes", "1",
                 "-q:v", "2",
                 output_path
-            ], check=True)
+            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return output_path
         except Exception as e:
             logging.error(f"Error generando miniatura: {str(e)}")
@@ -168,7 +179,7 @@ class YouTubeManager:
                 }
             ).execute()
             
-            if thumbnail_path:
+            if thumbnail_path and os.path.exists(thumbnail_path):
                 self.youtube.thumbnails().set(
                     videoId=broadcast_id,
                     media_body=thumbnail_path
@@ -197,11 +208,9 @@ def ciclo_transmision():
     
     while True:
         try:
-            # Seleccionar video y determinar categoría
             video = random.choice(gestor.medios['videos'])
             categoria = determinar_categoria(video['name'])
             
-            # Filtrar audios correspondientes
             palabras_clave = PALABRAS_CLAVE[categoria]
             audios = [a for a in gestor.medios['sonidos_naturaleza'] 
                      if a['local_path'] and any(p in a['name'].lower() for p in palabras_clave)]
@@ -212,16 +221,14 @@ def ciclo_transmision():
             
             random.shuffle(audios)
             
-            # Generar playlist
             playlist_path = "/tmp/playlist.txt"
             with open(playlist_path, 'w') as f:
                 for audio in audios:
                     f.write(f"file '{os.path.abspath(audio['local_path'])}'\n")
             
-            # Generar título
             titulo = generar_titulo(video['name'], categoria)
             
-            # Comando FFmpeg
+            # Configuración optimizada 720p
             cmd = [
                 "ffmpeg",
                 "-loglevel", "error",
@@ -235,37 +242,37 @@ def ciclo_transmision():
                 "-i", playlist_path,
                 "-map", "0:v:0",
                 "-map", "1:a:0",
+                "-vf", "scale=1280:720",  # Resolución 720p
                 "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-b:v", "2500k",
-                "-maxrate", "3000k",
-                "-bufsize", "5000k",
-                "-pix_fmt", "yuv420p",
+                "-preset", "veryfast",    # Balance entre CPU y calidad
+                "-b:v", "1500k",          # Bitrate video
+                "-maxrate", "2000k",
+                "-bufsize", "3000k",
                 "-g", "60",
                 "-r", "30",
                 "-c:a", "aac",
-                "-b:a", "160k",
-                "-ar", "48000",
-                "-t", "28800",  # 8 horas
+                "-b:a", "128k",           # Bitrate audio
+                "-ar", "44100",
+                "-ac", "2",
+                "-t", "28800",
                 "-f", "flv",
                 RTMP_URL
             ]
             
-            # Iniciar transmisión
             logging.info(f"""
             🎬 INICIANDO TRANSMISIÓN 🎬
             📺 Video: {video['name']}
             🌿 Categoría: {categoria}
             🎶 Audios seleccionados: {len(audios)} pistas
-            🏷️ Título programado: {titulo} (actualización en 5 min)
+            🏷️ Título programado: {titulo}
+            ⚙️ Configuración: 720p @ 1500kbps
             ⏳ Duración: 8 horas
             """)
             
             proceso = subprocess.Popen(cmd)
             
-            # Programar actualización de YouTube después de 5 minutos
             def actualizar_youtube():
-                time.sleep(300)
+                time.sleep(300)  # 5 minutos
                 if youtube.youtube:
                     youtube.actualizar_transmision(titulo, video['url'])
             
