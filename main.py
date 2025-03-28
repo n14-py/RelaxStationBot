@@ -5,13 +5,13 @@ import logging
 import time
 import requests
 import hashlib
-from datetime import datetime
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from flask import Flask
 from waitress import serve
 from urllib.parse import urlparse
+import threading
 
 app = Flask(__name__)
 
@@ -81,7 +81,13 @@ class GestorContenido:
         try:
             respuesta = requests.get(MEDIOS_URL, timeout=10)
             respuesta.raise_for_status()
-            return respuesta.json()
+            datos = respuesta.json()
+            
+            for medio in datos['sonidos_naturaleza']:
+                medio['local_path'] = self.descargar_audio(medio['url'])
+            
+            logging.info("✅ Medios verificados y listos")
+            return datos
         except Exception as e:
             logging.error(f"Error cargando medios: {str(e)}")
             return {"videos": [], "sonidos_naturaleza": []}
@@ -167,8 +173,7 @@ def ejecutar_transmision(video, audio, titulo):
         ]
         
         proceso = subprocess.Popen(cmd)
-        proceso.wait()  # Esperar a que termine completamente
-        
+        proceso.wait()
         return True
     except Exception as e:
         logging.error(f"Error FFmpeg: {str(e)}")
@@ -180,14 +185,14 @@ def ciclo_transmision():
     
     while True:
         try:
-            # Selección única de medios
+            # Selección de medios
             video = random.choice(gestor.medios['videos'])
             categoria = determinar_categoria(video['name'])
             audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
-            audio = random.choice([a for a in audios if any(p in a['name'].lower() for p in PALABRAS_CLAVE[categoria])] if audios else None
             
-            if not audio:
-                audio = random.choice(audios)
+            # Selección de audio con fallback
+            audios_filtrados = [a for a in audios if any(p in a['name'].lower() for p in PALABRAS_CLAVE[categoria])]
+            audio = random.choice(audios_filtrados) if audios_filtrados else random.choice(audios)
             
             titulo = generar_titulo(video['name'], categoria)
             
@@ -198,7 +203,7 @@ def ciclo_transmision():
             
             threading.Thread(target=actualizar_titulo, daemon=True).start()
             
-            # Ejecutar transmisión completa
+            # Iniciar transmisión
             logging.info(f"""
             🎬 INICIANDO TRANSMISIÓN 🎬
             📺 Video: {video['name']}
@@ -209,10 +214,8 @@ def ciclo_transmision():
             """)
             
             if ejecutar_transmision(video, audio, titulo):
-                logging.info("✅ Transmisión completada correctamente")
-                time.sleep(60)  # Espera entre transmisiones
-            else:
-                time.sleep(30)
+                logging.info("✅ Transmisión completada - Reiniciando...")
+                time.sleep(60)
             
         except Exception as e:
             logging.error(f"Error general: {str(e)}")
@@ -223,5 +226,5 @@ def health_check():
     return "OK", 200
 
 if __name__ == "__main__":
+    threading.Thread(target=ciclo_transmision, daemon=True).start()
     serve(app, host='0.0.0.0', port=10000)
-    ciclo_transmision()
