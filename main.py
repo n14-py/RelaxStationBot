@@ -12,7 +12,6 @@ from google.oauth2.credentials import Credentials
 from flask import Flask
 from waitress import serve
 from urllib.parse import urlparse
-import threading
 
 app = Flask(__name__)
 
@@ -46,24 +45,13 @@ class GestorContenido:
         os.makedirs(self.media_cache_dir, exist_ok=True, mode=0o777)
         self.medios = self.cargar_medios()
     
-    def obtener_extension_segura(self, url):
-        try:
-            parsed = urlparse(url)
-            return os.path.splitext(parsed.path)[1].lower() or '.mp3'
-        except:
-            return '.mp3'
-
     def descargar_audio(self, url):
         try:
             nombre_hash = hashlib.md5(url.encode()).hexdigest()
             ruta_local = os.path.join(self.media_cache_dir, f"{nombre_hash}.wav")
             
             if os.path.exists(ruta_local):
-                try:
-                    subprocess.run(["ffprobe", ruta_local], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    return ruta_local
-                except:
-                    os.remove(ruta_local)
+                return ruta_local
             
             temp_path = os.path.join(self.media_cache_dir, f"temp_{nombre_hash}")
             
@@ -93,13 +81,7 @@ class GestorContenido:
         try:
             respuesta = requests.get(MEDIOS_URL, timeout=10)
             respuesta.raise_for_status()
-            datos = respuesta.json()
-            
-            for medio in datos['sonidos_naturaleza']:
-                medio['local_path'] = self.descargar_audio(medio['url'])
-            
-            logging.info("✅ Medios verificados y listos")
-            return datos
+            return respuesta.json()
         except Exception as e:
             logging.error(f"Error cargando medios: {str(e)}")
             return {"videos": [], "sonidos_naturaleza": []}
@@ -120,24 +102,8 @@ class YouTubeManager:
         creds.refresh(Request())
         return build('youtube', 'v3', credentials=creds)
     
-    def generar_miniatura(self, video_url):
-        try:
-            output_path = "/tmp/miniatura.jpg"
-            subprocess.run([
-                "ffmpeg",
-                "-y", "-ss", "00:00:03",
-                "-i", video_url,
-                "-vframes", "1",
-                "-q:v", "2",
-                output_path
-            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return output_path
-        except:
-            return None
-    
     def actualizar_transmision(self, titulo, video_url):
         try:
-            thumbnail_path = self.generar_miniatura(video_url)
             broadcasts = self.youtube.liveBroadcasts().list(
                 part="id,snippet,status",
                 broadcastStatus="active"
@@ -157,16 +123,9 @@ class YouTubeManager:
                 }
             ).execute()
             
-            if thumbnail_path:
-                self.youtube.thumbnails().set(
-                    videoId=broadcast_id,
-                    media_body=thumbnail_path
-                ).execute()
-                os.remove(thumbnail_path)
-            
-            logging.info(f"Actualizado YouTube: {titulo}")
+            logging.info(f"Título actualizado: {titulo}")
         except Exception as e:
-            logging.error(f"Error actualizando YouTube: {str(e)}")
+            logging.error(f"Error YouTube: {str(e)}")
 
 def determinar_categoria(nombre_video):
     nombre = nombre_video.lower()
@@ -180,79 +139,83 @@ def generar_titulo(nombre_video, categoria):
     ubicacion = next((p for p in ubicaciones if p.lower() in nombre_video.lower()), 'Entorno')
     return f"{ubicacion} • Sonidos de {categoria.capitalize()} 🌿 24/7"
 
+def ejecutar_transmision(video, audio, titulo):
+    try:
+        cmd = [
+            "ffmpeg",
+            "-loglevel", "error",
+            "-stream_loop", "-1",
+            "-i", video['url'],
+            "-stream_loop", "-1",
+            "-i", audio['local_path'],
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-b:v", "4000k",
+            "-maxrate", "5000k",
+            "-bufsize", "8000k",
+            "-g", "60",
+            "-r", "30",
+            "-c:a", "aac",
+            "-b:a", "160k",
+            "-ar", "44100",
+            "-t", "28800",  # 8 horas exactas
+            "-f", "flv",
+            RTMP_URL
+        ]
+        
+        proceso = subprocess.Popen(cmd)
+        proceso.wait()  # Esperar a que termine completamente
+        
+        return True
+    except Exception as e:
+        logging.error(f"Error FFmpeg: {str(e)}")
+        return False
+
 def ciclo_transmision():
     gestor = GestorContenido()
     youtube = YouTubeManager()
     
     while True:
         try:
-            # Seleccionar 1 video y 1 audio
+            # Selección única de medios
             video = random.choice(gestor.medios['videos'])
             categoria = determinar_categoria(video['name'])
+            audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
+            audio = random.choice([a for a in audios if any(p in a['name'].lower() for p in PALABRAS_CLAVE[categoria])] if audios else None
             
-            # Buscar audio correspondiente
-            audios = [a for a in gestor.medios['sonidos_naturaleza'] 
-                     if a['local_path'] and any(p in a['name'].lower() for p in PALABRAS_CLAVE[categoria])]
-            
-            if not audios:
-                audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
-            
-            audio = random.choice(audios)
+            if not audio:
+                audio = random.choice(audios)
             
             titulo = generar_titulo(video['name'], categoria)
             
-            # Configuración 1080p optimizada
-            cmd = [
-                "ffmpeg",
-                "-loglevel", "error",
-                "-stream_loop", "-1",
-                "-i", video['url'],
-                "-stream_loop", "-1",
-                "-i", audio['local_path'],
-                "-map", "0:v:0",
-                "-map", "1:a:0",
-                "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-b:v", "4000k",
-                "-maxrate", "5000k",
-                "-bufsize", "8000k",
-                "-g", "60",
-                "-r", "30",
-                "-c:a", "aac",
-                "-b:a", "160k",
-                "-ar", "44100",
-                "-t", "28800",  # 8 horas exactas
-                "-f", "flv",
-                RTMP_URL
-            ]
+            # Actualizar YouTube después de 5 minutos
+            def actualizar_titulo():
+                time.sleep(300)
+                youtube.actualizar_transmision(titulo, video['url'])
             
+            threading.Thread(target=actualizar_titulo, daemon=True).start()
+            
+            # Ejecutar transmisión completa
             logging.info(f"""
             🎬 INICIANDO TRANSMISIÓN 🎬
             📺 Video: {video['name']}
             🔉 Audio: {audio['name']}
             🌿 Categoría: {categoria}
             🏷️ Título: {titulo}
-            ⚙️ Configuración: 1080p @ 4000kbps
             ⏳ Duración: 8 horas
             """)
             
-            # Actualizar YouTube después de 5 minutos
-            def actualizar_youtube():
-                time.sleep(300)
-                youtube.actualizar_transmision(titulo, video['url'])
-            
-            threading.Thread(target=actualizar_youtube, daemon=True).start()
-            
-            # Ejecutar transmisión completa
-            proceso = subprocess.Popen(cmd)
-            proceso.wait()
-            
-            # Esperar a que termine completamente
-            time.sleep(60)  # Pausa entre transmisiones
+            if ejecutar_transmision(video, audio, titulo):
+                logging.info("✅ Transmisión completada correctamente")
+                time.sleep(60)  # Espera entre transmisiones
+            else:
+                time.sleep(30)
             
         except Exception as e:
-            logging.error(f"Error en transmisión: {str(e)}")
+            logging.error(f"Error general: {str(e)}")
             time.sleep(60)
 
 @app.route('/health')
@@ -260,5 +223,5 @@ def health_check():
     return "OK", 200
 
 if __name__ == "__main__":
-    threading.Thread(target=ciclo_transmision, daemon=True).start()
     serve(app, host='0.0.0.0', port=10000)
+    ciclo_transmision()
