@@ -1,5 +1,3 @@
-
-
 import os
 import random
 import subprocess
@@ -15,6 +13,7 @@ from google.oauth2.credentials import Credentials
 from flask import Flask
 from waitress import serve
 from urllib.parse import urlparse
+import threading
 
 app = Flask(__name__)
 
@@ -91,7 +90,7 @@ class GestorContenido:
             if not all(key in datos for key in ["videos", "musica", "sonidos_naturaleza"]):
                 raise ValueError("Estructura JSON inválida")
             
-            for medio in datos['musica'] + datos['sonidos_naturaleza']:
+            for medio in datos['sonidos_naturaleza']:
                 local_path = self.descargar_audio(medio['url'])
                 if local_path and os.path.exists(local_path):
                     medio['local_path'] = local_path
@@ -163,7 +162,7 @@ class YouTubeManager:
                     "id": broadcast_id,
                     "snippet": {
                         "title": titulo,
-                        "description": "Streaming 24/7 - Sonidos Naturales y Música Relajante",
+                        "description": "Streaming 24/7 - Sonidos Naturales Relajantes",
                         "categoryId": "22"
                     }
                 }
@@ -180,18 +179,17 @@ class YouTubeManager:
         except Exception as e:
             logging.error(f"Error actualizando YouTube: {str(e)}")
 
-def generar_titulo(nombre_video, fase):
+def determinar_categoria(nombre_video):
     nombre = nombre_video.lower()
-    ubicacion = next((p for p in ['Cabaña', 'Sala', 'Cueva', 'Montaña', 'Departamento', 'Cafetería'] if p.lower() in nombre), 'Entorno')
-    
-    if fase == 0:  # Música
-        return f"{ubicacion} • Música Relajante 🌿 24/7"
-    elif fase == 1:  # Naturaleza
-        tema = next((t for t, keys in PALABRAS_CLAVE.items() if any(k in nombre for k in keys)), 'Naturaleza')
-        return f"{ubicacion} • Sonidos de {tema.capitalize()} 🌿 24/7"
-    else:  # Combinado
-        tema = next((t for t, keys in PALABRAS_CLAVE.items() if any(k in nombre for k in keys)), 'Naturaleza')
-        return f"{ubicacion} • Música y Sonidos de {tema.capitalize()} 🌿 24/7"
+    for categoria, palabras in PALABRAS_CLAVE.items():
+        if any(palabra in nombre for palabra in palabras):
+            return categoria
+    return random.choice(list(PALABRAS_CLAVE.keys()))
+
+def generar_titulo(nombre_video, categoria):
+    ubicaciones = ['Cabaña', 'Sala', 'Cueva', 'Montaña', 'Departamento', 'Cafetería']
+    ubicacion = next((p for p in ubicaciones if p.lower() in nombre_video.lower()), 'Entorno')
+    return f"{ubicacion} • Sonidos de {categoria.capitalize()} 🌿 24/7"
 
 def ciclo_transmision():
     gestor = GestorContenido()
@@ -199,25 +197,18 @@ def ciclo_transmision():
     
     while True:
         try:
-            # Seleccionar fase
-            fase = random.choice([0, 1, 2])  # 0=Música, 1=Naturaleza, 2=Combinado
+            # Seleccionar video y determinar categoría
             video = random.choice(gestor.medios['videos'])
+            categoria = determinar_categoria(video['name'])
             
-            # Configurar contenido según fase
-            if fase == 0:
-                audios = [a for a in gestor.medios['musica'] if a['local_path']]
-                tipo_contenido = "Música Relajante"
-            elif fase == 1:
-                audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
-                tipo_contenido = "Sonidos de Naturaleza"
-            else:
-                audios = [a for a in gestor.medios['musica'] + gestor.medios['sonidos_naturaleza'] if a['local_path']]
-                tipo_contenido = "Música y Sonidos Naturales"
+            # Filtrar audios correspondientes
+            palabras_clave = PALABRAS_CLAVE[categoria]
+            audios = [a for a in gestor.medios['sonidos_naturaleza'] 
+                     if a['local_path'] and any(p in a['name'].lower() for p in palabras_clave)]
             
             if not audios:
-                logging.error("No hay audios válidos disponibles")
-                time.sleep(60)
-                continue
+                audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
+                logging.warning("Usando todos los sonidos disponibles")
             
             random.shuffle(audios)
             
@@ -225,15 +216,10 @@ def ciclo_transmision():
             playlist_path = "/tmp/playlist.txt"
             with open(playlist_path, 'w') as f:
                 for audio in audios:
-                    if audio['local_path']:
-                        f.write(f"file '{os.path.abspath(audio['local_path'])}'\n")
+                    f.write(f"file '{os.path.abspath(audio['local_path'])}'\n")
             
-            # Generar título según fase
-            titulo = generar_titulo(video['name'], fase)
-            
-            # Actualizar YouTube
-            if youtube.youtube:
-                youtube.actualizar_transmision(titulo, video['url'])
+            # Generar título
+            titulo = generar_titulo(video['name'], categoria)
             
             # Comando FFmpeg
             cmd = [
@@ -260,22 +246,31 @@ def ciclo_transmision():
                 "-c:a", "aac",
                 "-b:a", "160k",
                 "-ar", "48000",
-                "-t", "28800",
+                "-t", "28800",  # 8 horas
                 "-f", "flv",
                 RTMP_URL
             ]
             
-            # Log detallado
+            # Iniciar transmisión
             logging.info(f"""
             🎬 INICIANDO TRANSMISIÓN 🎬
             📺 Video: {video['name']}
-            🎵 Tipo: {tipo_contenido}
-            🎶 Audios: {len(audios)} pistas
-            🏷️ Título actualizado: {titulo}
+            🌿 Categoría: {categoria}
+            🎶 Audios seleccionados: {len(audios)} pistas
+            🏷️ Título programado: {titulo} (actualización en 5 min)
             ⏳ Duración: 8 horas
             """)
             
             proceso = subprocess.Popen(cmd)
+            
+            # Programar actualización de YouTube después de 5 minutos
+            def actualizar_youtube():
+                time.sleep(300)
+                if youtube.youtube:
+                    youtube.actualizar_transmision(titulo, video['url'])
+            
+            threading.Thread(target=actualizar_youtube, daemon=True).start()
+            
             proceso.wait()
             
             if os.path.exists(playlist_path):
@@ -290,6 +285,5 @@ def health_check():
     return "OK", 200
 
 if __name__ == "__main__":
-    import threading
     threading.Thread(target=ciclo_transmision, daemon=True).start()
     serve(app, host='0.0.0.0', port=10000)
