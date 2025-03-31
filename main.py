@@ -1,4 +1,3 @@
-
 import os
 import random
 import subprocess
@@ -61,7 +60,7 @@ class GestorContenido:
         try:
             nombre_hash = hashlib.md5(url.encode()).hexdigest()
             extension = self.obtener_extension_segura(url)
-            nombre_archivo = f"{nombre_hash}.wav"  # Convertimos todo a WAV
+            nombre_archivo = f"{nombre_hash}.wav"
             ruta_local = os.path.join(self.media_cache_dir, nombre_archivo)
             
             if os.path.exists(ruta_local):
@@ -80,7 +79,6 @@ class GestorContenido:
                 for chunk in respuesta.iter_content(chunk_size=8192):
                     f.write(chunk)
             
-            # Conversión a WAV para compatibilidad
             subprocess.run([
                 "ffmpeg",
                 "-y",
@@ -209,6 +207,7 @@ def ciclo_transmision():
     
     while True:
         try:
+            # Seleccionar medios para el ciclo de 8 horas
             video = random.choice(gestor.medios['videos'])
             categoria = determinar_categoria(video['name'])
             
@@ -220,14 +219,14 @@ def ciclo_transmision():
                 audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
                 logging.warning("Usando todos los sonidos disponibles")
             
-            random.shuffle(audios)
-            
-            playlist_path = "/tmp/playlist.txt"
-            with open(playlist_path, 'w') as f:
-                for audio in audios:
-                    f.write(f"file '{os.path.abspath(audio['local_path'])}'\n")
+            audio = random.choice(audios)
+            audio_path = audio['local_path']
             
             titulo = generar_titulo(video['name'], categoria)
+            
+            # Actualizar YouTube al inicio del ciclo
+            if youtube.youtube:
+                youtube.actualizar_transmision(titulo, video['url'])
             
             # Configuración optimizada 720p
             cmd = [
@@ -236,56 +235,65 @@ def ciclo_transmision():
                 "-re",
                 "-stream_loop", "-1",
                 "-i", video['url'],
-                "-f", "concat",
-                "-safe", "0",
-                "-protocol_whitelist", "file,http,https,tcp,tls",
                 "-stream_loop", "-1",
-                "-i", playlist_path,
+                "-i", audio_path,
                 "-map", "0:v:0",
                 "-map", "1:a:0",
-                "-vf", "scale=1280:720",  # Resolución 720p
+                "-vf", "scale=1280:720",
                 "-c:v", "libx264",
-                "-preset", "veryfast",    # Balance entre CPU y calidad
-                "-b:v", "1500k",          # Bitrate video
+                "-preset", "veryfast",
+                "-b:v", "1500k",
                 "-maxrate", "2000k",
                 "-bufsize", "3000k",
                 "-g", "60",
                 "-r", "30",
                 "-c:a", "aac",
-                "-b:a", "128k",           # Bitrate audio
+                "-b:a", "128k",
                 "-ar", "44100",
                 "-ac", "2",
-                "-t", "28800",
                 "-f", "flv",
                 RTMP_URL
             ]
             
             logging.info(f"""
-            🎬 INICIANDO TRANSMISIÓN 🎬
+            🎬 INICIANDO CICLO DE 8 HORAS 🎬
             📺 Video: {video['name']}
             🌿 Categoría: {categoria}
-            🎶 Audios seleccionados: {len(audios)} pistas
-            🏷️ Título programado: {titulo}
+            🔊 Audio seleccionado: {audio['name']}
+            🏷️ Título: {titulo}
             ⚙️ Configuración: 720p @ 1500kbps
-            ⏳ Duración: 8 horas
             """)
             
-            proceso = subprocess.Popen(cmd)
+            start_time = time.time()
+            end_time = start_time + 28800  # 8 horas
             
-            def actualizar_youtube():
-                time.sleep(300)  # 5 minutos
-                if youtube.youtube:
-                    youtube.actualizar_transmision(titulo, video['url'])
+            while time.time() < end_time:
+                proceso = subprocess.Popen(cmd)
+                proceso_pid = proceso.pid
+                
+                try:
+                    while time.time() < end_time:
+                        exit_code = proceso.poll()
+                        if exit_code is not None:
+                            logging.error(f"FFmpeg se cayó (código {exit_code}). Reiniciando...")
+                            break
+                        time.sleep(5)
+                    
+                    if time.time() < end_time:
+                        proceso.terminate()
+                        try:
+                            proceso.wait(timeout=30)
+                        except subprocess.TimeoutExpired:
+                            proceso.kill()
+                except Exception as e:
+                    logging.error(f"Error en FFmpeg: {str(e)}")
+                
+                time.sleep(1)
             
-            threading.Thread(target=actualizar_youtube, daemon=True).start()
-            
-            proceso.wait()
-            
-            if os.path.exists(playlist_path):
-                os.remove(playlist_path)
-            
+            logging.info("🕒 Ciclo de 8 horas completado. Seleccionando nuevos medios...")
+        
         except Exception as e:
-            logging.error(f"Error en transmisión: {str(e)}")
+            logging.error(f"Error en ciclo de transmisión: {str(e)}")
             time.sleep(60)
 
 @app.route('/health')
