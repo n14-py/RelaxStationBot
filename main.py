@@ -207,7 +207,7 @@ def ciclo_transmision():
     
     while True:
         try:
-            # Seleccionar medios para el ciclo de 8 horas
+            # Selección de medios para 8 horas
             video = random.choice(gestor.medios['videos'])
             categoria = determinar_categoria(video['name'])
             
@@ -224,11 +224,7 @@ def ciclo_transmision():
             
             titulo = generar_titulo(video['name'], categoria)
             
-            # Actualizar YouTube al inicio del ciclo
-            if youtube.youtube:
-                youtube.actualizar_transmision(titulo, video['url'])
-            
-            # Configuración optimizada 720p
+            # Configuración FFmpeg
             cmd = [
                 "ffmpeg",
                 "-loglevel", "error",
@@ -264,33 +260,26 @@ def ciclo_transmision():
             ⚙️ Configuración: 720p @ 1500kbps
             """)
             
+            # Actualizar YouTube después de 10 minutos
+            def actualizar_youtube():
+                time.sleep(600)  # 10 minutos
+                if youtube.youtube:
+                    youtube.actualizar_transmision(titulo, video['url'])
+            
+            threading.Thread(target=actualizar_youtube, daemon=True).start()
+            
+            # Ejecutar por 8 horas
             start_time = time.time()
-            end_time = start_time + 28800  # 8 horas
+            proceso = subprocess.Popen(cmd)
             
-            while time.time() < end_time:
-                proceso = subprocess.Popen(cmd)
-                proceso_pid = proceso.pid
-                
-                try:
-                    while time.time() < end_time:
-                        exit_code = proceso.poll()
-                        if exit_code is not None:
-                            logging.error(f"FFmpeg se cayó (código {exit_code}). Reiniciando...")
-                            break
-                        time.sleep(5)
-                    
-                    if time.time() < end_time:
-                        proceso.terminate()
-                        try:
-                            proceso.wait(timeout=30)
-                        except subprocess.TimeoutExpired:
-                            proceso.kill()
-                except Exception as e:
-                    logging.error(f"Error en FFmpeg: {str(e)}")
-                
-                time.sleep(1)
+            while (time.time() - start_time) < 28800:  # 8 horas
+                if proceso.poll() is not None:
+                    logging.error("FFmpeg se detuvo. Reiniciando...")
+                    proceso = subprocess.Popen(cmd)
+                time.sleep(30)
             
-            logging.info("🕒 Ciclo de 8 horas completado. Seleccionando nuevos medios...")
+            proceso.terminate()
+            logging.info("🕒 Ciclo de 8 horas completado. Cambiando contenido...")
         
         except Exception as e:
             logging.error(f"Error en ciclo de transmisión: {str(e)}")
