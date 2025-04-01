@@ -55,6 +55,11 @@ class GestorContenido:
 
     def descargar_audio(self, url):
         try:
+            # Corrección para Google Drive
+            if "drive.google.com" in url:
+                file_id = url.split('id=')[-1].split('&')[0]
+                url = f"https://drive.google.com/uc?export=download&id={file_id}&confirm=t"
+            
             nombre_hash = hashlib.md5(url.encode()).hexdigest()
             ruta_local = os.path.join(self.media_cache_dir, f"{nombre_hash}.wav")
             
@@ -65,9 +70,9 @@ class GestorContenido:
             
             with requests.get(url, stream=True, timeout=30) as r:
                 r.raise_for_status()
-                with open(temp_path, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=8192):
-                        f.write(chunk)
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:  # Filtra keep-alive chunks
+                        open(temp_path, 'ab').write(chunk)
             
             subprocess.run([
                 "ffmpeg", "-y", "-i", temp_path,
@@ -83,7 +88,7 @@ class GestorContenido:
 
     def cargar_medios(self):
         try:
-            respuesta = requests.get(MEDIOS_URL, timeout=15)
+            respuesta = requests.get(MEDIOS_URL, timeout=20)
             respuesta.raise_for_status()
             datos = respuesta.json()
             
@@ -93,7 +98,7 @@ class GestorContenido:
             for medio in datos['sonidos_naturaleza']:
                 medio['local_path'] = self.descargar_audio(medio['url'])
             
-            logging.info("✅ Medios cargados correctamente")
+            logging.info("✅ Medios verificados y listos")
             return datos
         except Exception as e:
             logging.error(f"Error cargando medios: {str(e)}")
@@ -121,13 +126,14 @@ class YouTubeManager:
     
     def generar_miniatura(self, video_url):
         try:
-            output_path = "/tmp/miniatura.jpg"
+            output_path = "/tmp/miniatura_actualizada.jpg"
             subprocess.run([
                 "ffmpeg",
-                "-y", "-ss", "00:00:03",
+                "-y", "-ss", "00:01:00",
                 "-i", video_url,
                 "-vframes", "1",
                 "-q:v", "2",
+                "-vf", "format=yuvj420p",  # Formato compatible
                 output_path
             ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return output_path
@@ -145,10 +151,11 @@ class YouTubeManager:
             
             if not broadcasts.get('items'):
                 logging.error("¡Primero crea una transmisión ACTIVA en YouTube Studio!")
-                return
+                return False
             
             broadcast_id = broadcasts['items'][0]['id']
             
+            # Actualizar título
             self.youtube.liveBroadcasts().update(
                 part="snippet",
                 body={
@@ -161,6 +168,7 @@ class YouTubeManager:
                 }
             ).execute()
             
+            # Actualizar miniatura
             if thumbnail_path and os.path.exists(thumbnail_path):
                 self.youtube.thumbnails().set(
                     videoId=broadcast_id,
@@ -168,9 +176,10 @@ class YouTubeManager:
                 ).execute()
                 os.remove(thumbnail_path)
             
-            logging.info(f"🔄 Título actualizado en YouTube: {titulo}")
+            return True
         except Exception as e:
-            logging.error(f"Error actualizando YouTube: {str(e)}")
+            logging.error(f"Error en actualización: {str(e)}")
+            return False
 
 def determinar_categoria(nombre_video):
     nombre = nombre_video.lower()
@@ -193,23 +202,24 @@ def ciclo_transmision():
             # Selección de contenido
             video = random.choice(gestor.medios['videos'])
             categoria = determinar_categoria(video['name'])
-            audios_disponibles = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
-            audio = random.choice(audios_disponibles)
+            audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
+            audio = random.choice(audios)
             titulo = generar_titulo(video['name'], categoria)
             
-            # Mostrar detalles de la transmisión
             logging.info(f"""
-            🚀 INICIANDO TRANSMISIÓN 🚀
-            📺 Video seleccionado: {video.get('name', 'Sin nombre')}
-            🌿 Categoría detectada: {categoria}
-            🔊 Audio seleccionado: {audio.get('name', 'Sin nombre')}
-            🏷️ Título generado: {titulo}
+            🚀 TRANSMISIÓN INICIADA 🚀
+            📍 Ubicación: {video.get('name', 'Desconocido')}
+            🌳 Categoría: {categoria}
+            🔊 Sonido: {audio.get('name', 'Desconocido')}
+            🏷️ Título: {titulo}
+            ⏱ Actualización a los 15 minutos
             """)
             
-            # Configuración FFmpeg Ultra-Optimizada
+            # Configuración FFmpeg Estable
             cmd = [
                 "ffmpeg",
                 "-loglevel", "error",
+                "-rtbufsize", "100M",  # Buffer grande
                 "-re",
                 "-stream_loop", "-1",
                 "-i", video['url'],
@@ -228,6 +238,7 @@ def ciclo_transmision():
                 "-r", "24",
                 "-g", "48",
                 "-threads", "1",
+                "-flush_packets", "1",  # Envío constante
                 "-c:a", "aac",
                 "-b:a", "96k",
                 "-ar", "44100",
@@ -235,35 +246,40 @@ def ciclo_transmision():
                 RTMP_URL
             ]
             
-            # Precargar buffer de 10 minutos
-            logging.info("⏳ Precargando buffer de 10 minutos...")
-            with open(os.devnull, 'w') as devnull:
-                subprocess.run(cmd + ["-t", "600"], stdout=devnull, stderr=devnull)
-            
-            # Iniciar transmisión principal
-            proceso = subprocess.Popen(cmd)
+            # Iniciar transmisión
+            proceso = None
             start_time = time.time()
-            actualizacion_realizada = False
+            actualizacion_realizada = [False]  # Estado mutable
             
             def actualizar_youtube():
-                nonlocal actualizacion_realizada
-                time.sleep(600)  # 10 minutos
-                if youtube.youtube and not actualizacion_realizada:
-                    youtube.actualizar_transmision(titulo, video['url'])
-                    actualizacion_realizada = True
+                time.sleep(900)  # 15 minutos = 900 segundos
+                if not actualizacion_realizada[0]:
+                    logging.info("⏳ Intentando actualizar título y miniatura...")
+                    if youtube.actualizar_transmision(titulo, video['url']):
+                        logging.info("✅ ¡Actualización exitosa! (Título y miniatura)")
+                        actualizacion_realizada[0] = True
+                    else:
+                        logging.warning("⚠️ Falló actualización, reintentando en 2 minutos...")
+                        time.sleep(120)
+                        if youtube.actualizar_transmision(titulo, video['url']):
+                            logging.info("✅ ¡Actualización recuperada!")
+                            actualizacion_realizada[0] = True
             
             threading.Thread(target=actualizar_youtube, daemon=True).start()
             
-            # Mantener transmisión por 8 horas
-            while (time.time() - start_time) < 28800:  # 8 horas = 28800 segundos
-                if proceso.poll() is not None:
-                    logging.warning("⚡ Reconectando FFmpeg...")
+            # Ciclo de 8 horas con reconexión segura
+            while (time.time() - start_time) < 28800:
+                if proceso is None or proceso.poll() is not None:
+                    if proceso:
+                        proceso.kill()  # Terminar proceso anterior
+                    logging.info("🔄 Iniciando/Reiniciando FFmpeg...")
                     proceso = subprocess.Popen(cmd)
-                time.sleep(30)
+                time.sleep(15)
             
-            proceso.terminate()
-            logging.info("✅ Ciclo completado. Esperando 10 minutos...")
-            time.sleep(600)  # Espera 10 minutos antes de reiniciar
+            # Finalizar ciclo
+            proceso.kill()
+            logging.info("🛑 Ciclo completado. Esperando 10 minutos...")
+            time.sleep(600)
             
         except Exception as e:
             logging.error(f"🔥 Error crítico: {str(e)}")
@@ -274,6 +290,6 @@ def health_check():
     return "OK", 200
 
 if __name__ == "__main__":
-    logging.info("🎥 Iniciando servicio de transmisión...")
+    logging.info("🎬 Iniciando servicio de streaming...")
     threading.Thread(target=ciclo_transmision, daemon=True).start()
     serve(app, host='0.0.0.0', port=10000)
