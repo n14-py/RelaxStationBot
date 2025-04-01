@@ -14,6 +14,8 @@ from flask import Flask
 from waitress import serve
 from urllib.parse import urlparse
 import threading
+import psutil
+import signal
 
 app = Flask(__name__)
 
@@ -25,7 +27,7 @@ logging.basicConfig(
 )
 
 # Configuración
-RTMP_URL = os.getenv("RTMP_URL")
+RTMP_BASE_URL = os.getenv("RTMP_BASE_URL", "rtmp://a.rtmp.youtube.com/live2")
 MEDIOS_URL = "https://raw.githubusercontent.com/n14-py/RelaxStationBot/master/medios.json"
 YOUTUBE_CREDS = {
     'client_id': os.getenv("YOUTUBE_CLIENT_ID"),
@@ -119,6 +121,8 @@ class GestorContenido:
 class YouTubeManager:
     def __init__(self):
         self.youtube = self.autenticar()
+        self.broadcast_id = None
+        self.stream_id = None
     
     def autenticar(self):
         try:
@@ -128,13 +132,85 @@ class YouTubeManager:
                 client_id=YOUTUBE_CREDS['client_id'],
                 client_secret=YOUTUBE_CREDS['client_secret'],
                 token_uri="https://oauth2.googleapis.com/token",
-                scopes=['https://www.googleapis.com/auth/youtube']
+                scopes=['https://www.googleapis.com/auth/youtube',
+                        'https://www.googleapis.com/auth/youtube.force-ssl']
             )
             creds.refresh(Request())
             return build('youtube', 'v3', credentials=creds)
         except Exception as e:
             logging.error(f"Error autenticación YouTube: {str(e)}")
             return None
+    
+    def crear_transmision(self, titulo):
+        try:
+            # Crear broadcast
+            broadcast = self.youtube.liveBroadcasts().insert(
+                part="snippet,status",
+                body={
+                    "snippet": {
+                        "title": titulo,
+                        "description": "Streaming 24/7 - Sonidos Naturales Relajantes",
+                        "scheduledStartTime": datetime.utcnow().isoformat() + "Z"
+                    },
+                    "status": {
+                        "privacyStatus": "public",
+                        "selfDeclaredMadeForKids": False
+                    }
+                }
+            ).execute()
+            
+            self.broadcast_id = broadcast['id']
+            
+            # Crear stream de entrada
+            stream = self.youtube.liveStreams().insert(
+                part="snippet,cdn",
+                body={
+                    "snippet": {
+                        "title": "RTMP Input Stream",
+                        "description": "Entrada para streaming continuo"
+                    },
+                    "cdn": {
+                        "format": "1080p",
+                        "ingestionType": "rtmp"
+                    }
+                }
+            ).execute()
+            
+            self.stream_id = stream['id']
+            
+            # Vincular broadcast con stream
+            self.youtube.liveBroadcasts().bind(
+                part="id,contentDetails",
+                id=self.broadcast_id,
+                streamId=self.stream_id
+            ).execute()
+            
+            return stream['cdn']['ingestionInfo']['streamName']
+        
+        except Exception as e:
+            logging.error(f"Error creando transmisión: {str(e)}")
+            return None
+    
+    def finalizar_transmision(self):
+        try:
+            if self.broadcast_id:
+                self.youtube.liveBroadcasts().transition(
+                    broadcastStatus="complete",
+                    id=self.broadcast_id,
+                    part="id,status"
+                ).execute()
+                
+                # Eliminar stream
+                if self.stream_id:
+                    self.youtube.liveStreams().delete(
+                        id=self.stream_id
+                    ).execute()
+                
+                logging.info("✅ Transmisión finalizada y limpiada correctamente")
+                return True
+        except Exception as e:
+            logging.error(f"Error finalizando transmisión: {str(e)}")
+            return False
     
     def generar_miniatura(self, video_url):
         try:
@@ -155,21 +231,11 @@ class YouTubeManager:
     def actualizar_transmision(self, titulo, video_url):
         try:
             thumbnail_path = self.generar_miniatura(video_url)
-            broadcasts = self.youtube.liveBroadcasts().list(
-                part="id,snippet,status",
-                broadcastStatus="active"
-            ).execute()
-            
-            if not broadcasts.get('items'):
-                logging.error("¡Crea una transmisión ACTIVA en YouTube Studio primero!")
-                return
-            
-            broadcast_id = broadcasts['items'][0]['id']
             
             self.youtube.liveBroadcasts().update(
                 part="snippet",
                 body={
-                    "id": broadcast_id,
+                    "id": self.broadcast_id,
                     "snippet": {
                         "title": titulo,
                         "description": "Streaming 24/7 - Sonidos Naturales Relajantes",
@@ -180,7 +246,7 @@ class YouTubeManager:
             
             if thumbnail_path and os.path.exists(thumbnail_path):
                 self.youtube.thumbnails().set(
-                    videoId=broadcast_id,
+                    videoId=self.broadcast_id,
                     media_body=thumbnail_path
                 ).execute()
                 os.remove(thumbnail_path)
@@ -201,13 +267,42 @@ def generar_titulo(nombre_video, categoria):
     ubicacion = next((p for p in ubicaciones if p.lower() in nombre_video.lower()), 'Entorno')
     return f"{ubicacion} • Sonidos de {categoria.capitalize()} 🌿 24/7"
 
+def manejar_ffmpeg(cmd, duracion):
+    proceso = subprocess.Popen(cmd)
+    start_time = time.time()
+    
+    try:
+        while (time.time() - start_time) < duracion:
+            if proceso.poll() is not None:
+                logging.error("FFmpeg se detuvo. Reiniciando...")
+                proceso = subprocess.Popen(cmd)
+            
+            # Monitoreo de recursos
+            if psutil.cpu_percent() > 90:
+                logging.warning("¡Alto uso de CPU! Reduciendo prioridad...")
+                os.kill(proceso.pid, signal.SIGTERM)
+                time.sleep(5)
+                proceso = subprocess.Popen(cmd)
+            
+            time.sleep(30)
+        
+        return proceso
+    except Exception as e:
+        logging.error(f"Error en manejador FFmpeg: {str(e)}")
+        return proceso
+
 def ciclo_transmision():
     gestor = GestorContenido()
-    youtube = YouTubeManager()
     
     while True:
+        youtube = YouTubeManager()
+        if not youtube.youtube:
+            logging.error("Error de autenticación YouTube. Reintentando en 5 minutos...")
+            time.sleep(300)
+            continue
+        
         try:
-            # Selección de medios para 8 horas
+            # Selección de contenido
             video = random.choice(gestor.medios['videos'])
             categoria = determinar_categoria(video['name'])
             
@@ -224,7 +319,14 @@ def ciclo_transmision():
             
             titulo = generar_titulo(video['name'], categoria)
             
-            # Configuración FFmpeg
+            # Crear nueva transmisión
+            stream_key = youtube.crear_transmision(titulo)
+            if not stream_key:
+                raise Exception("No se pudo crear nueva transmisión")
+            
+            rtmp_url = f"{RTMP_BASE_URL}/{stream_key}"
+            
+            # Configuración FFmpeg optimizada
             cmd = [
                 "ffmpeg",
                 "-loglevel", "error",
@@ -237,53 +339,62 @@ def ciclo_transmision():
                 "-map", "1:a:0",
                 "-vf", "scale=1280:720",
                 "-c:v", "libx264",
-                "-preset", "veryfast",
-                "-b:v", "1500k",
-                "-maxrate", "2000k",
-                "-bufsize", "3000k",
+                "-preset", "faster",
+                "-b:v", "2500k",
+                "-maxrate", "3000k",
+                "-bufsize", "4500k",
                 "-g", "60",
                 "-r", "30",
                 "-c:a", "aac",
                 "-b:a", "128k",
                 "-ar", "44100",
                 "-ac", "2",
+                "-flvflags", "no_duration_filesize",
                 "-f", "flv",
-                RTMP_URL
+                rtmp_url
             ]
             
             logging.info(f"""
-            🎬 INICIANDO CICLO DE 8 HORAS 🎬
+            🎬 INICIANDO TRANSMISIÓN INDEPENDIENTE 🎬
             📺 Video: {video['name']}
             🌿 Categoría: {categoria}
             🔊 Audio seleccionado: {audio['name']}
             🏷️ Título: {titulo}
-            ⚙️ Configuración: 720p @ 1500kbps
+            🔑 Stream Key: {stream_key}
+            ⏳ Duración programada: 8 horas
             """)
             
-            # Actualizar YouTube después de 10 minutos
+            # Hilo para actualización de YouTube
             def actualizar_youtube():
                 time.sleep(600)  # 10 minutos
-                if youtube.youtube:
-                    youtube.actualizar_transmision(titulo, video['url'])
+                youtube.actualizar_transmision(titulo, video['url'])
             
             threading.Thread(target=actualizar_youtube, daemon=True).start()
             
-            # Ejecutar por 8 horas
-            start_time = time.time()
-            proceso = subprocess.Popen(cmd)
+            # Ejecutar FFmpeg por 8 horas exactas
+            proceso = manejar_ffmpeg(cmd, 28800)
             
-            while (time.time() - start_time) < 28800:  # 8 horas
-                if proceso.poll() is not None:
-                    logging.error("FFmpeg se detuvo. Reiniciando...")
-                    proceso = subprocess.Popen(cmd)
-                time.sleep(30)
-            
+            # Finalización limpia
             proceso.terminate()
-            logging.info("🕒 Ciclo de 8 horas completado. Cambiando contenido...")
+            try:
+                proceso.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proceso.kill()
+            
+            # Finalizar transmisión en YouTube
+            if youtube.finalizar_transmision():
+                logging.info("🔄 Transmisión finalizada correctamente. Iniciando nuevo ciclo...")
+            else:
+                logging.error("⚠️ No se pudo finalizar la transmisión correctamente")
+            
+            # Espera entre ciclos
+            time.sleep(300)
         
         except Exception as e:
-            logging.error(f"Error en ciclo de transmisión: {str(e)}")
+            logging.error(f"Error en ciclo principal: {str(e)}")
             time.sleep(60)
+        finally:
+            del youtube
 
 @app.route('/health')
 def health_check():
