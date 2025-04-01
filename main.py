@@ -43,62 +43,47 @@ PALABRAS_CLAVE = {
 class GestorContenido:
     def __init__(self):
         self.media_cache_dir = os.path.abspath("./media_cache")
-        os.makedirs(self.media_cache_dir, exist_ok=True, mode=0o777)
+        os.makedirs(self.media_cache_dir, exist_ok=True)
         self.medios = self.cargar_medios()
     
     def obtener_extension_segura(self, url):
         try:
             parsed = urlparse(url)
-            path = parsed.path
-            extension = os.path.splitext(path)[1].lower()
-            return extension if extension in ['.mp3', '.wav'] else '.mp3'
+            return os.path.splitext(parsed.path)[1].lower() or '.mp3'
         except:
             return '.mp3'
 
     def descargar_audio(self, url):
         try:
             nombre_hash = hashlib.md5(url.encode()).hexdigest()
-            extension = self.obtener_extension_segura(url)
-            nombre_archivo = f"{nombre_hash}.wav"
-            ruta_local = os.path.join(self.media_cache_dir, nombre_archivo)
+            ruta_local = os.path.join(self.media_cache_dir, f"{nombre_hash}.wav")
             
             if os.path.exists(ruta_local):
-                try:
-                    subprocess.run(["ffprobe", ruta_local], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    return ruta_local
-                except:
-                    os.remove(ruta_local)
+                return ruta_local
+                
+            temp_path = os.path.join(self.media_cache_dir, f"temp_{nombre_hash}.mp3")
             
-            temp_path = os.path.join(self.media_cache_dir, f"temp_{nombre_hash}{extension}")
-            
-            respuesta = requests.get(url, stream=True, timeout=30)
-            respuesta.raise_for_status()
-            
-            with open(temp_path, 'wb') as f:
-                for chunk in respuesta.iter_content(chunk_size=8192):
-                    f.write(chunk)
+            with requests.get(url, stream=True, timeout=30) as r:
+                r.raise_for_status()
+                with open(temp_path, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
             
             subprocess.run([
-                "ffmpeg",
-                "-y",
-                "-i", temp_path,
-                "-acodec", "pcm_s16le",
-                "-ar", "44100",
-                "-ac", "2",
+                "ffmpeg", "-y", "-i", temp_path,
+                "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
                 ruta_local
-            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             
             os.remove(temp_path)
             return ruta_local
         except Exception as e:
-            logging.error(f"Error procesando {url}: {str(e)}")
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+            logging.error(f"Error procesando audio: {str(e)}")
             return None
 
     def cargar_medios(self):
         try:
-            respuesta = requests.get(MEDIOS_URL, timeout=10)
+            respuesta = requests.get(MEDIOS_URL, timeout=15)
             respuesta.raise_for_status()
             datos = respuesta.json()
             
@@ -106,10 +91,9 @@ class GestorContenido:
                 raise ValueError("Estructura JSON inválida")
             
             for medio in datos['sonidos_naturaleza']:
-                local_path = self.descargar_audio(medio['url'])
-                medio['local_path'] = local_path if local_path else None
+                medio['local_path'] = self.descargar_audio(medio['url'])
             
-            logging.info("✅ Medios verificados y listos")
+            logging.info("✅ Medios cargados correctamente")
             return datos
         except Exception as e:
             logging.error(f"Error cargando medios: {str(e)}")
@@ -160,7 +144,7 @@ class YouTubeManager:
             ).execute()
             
             if not broadcasts.get('items'):
-                logging.error("¡Crea una transmisión ACTIVA en YouTube Studio primero!")
+                logging.error("¡Primero crea una transmisión ACTIVA en YouTube Studio!")
                 return
             
             broadcast_id = broadcasts['items'][0]['id']
@@ -184,7 +168,7 @@ class YouTubeManager:
                 ).execute()
                 os.remove(thumbnail_path)
             
-            logging.info(f"Actualizado YouTube: {titulo}")
+            logging.info(f"🔄 Título actualizado en YouTube: {titulo}")
         except Exception as e:
             logging.error(f"Error actualizando YouTube: {str(e)}")
 
@@ -206,14 +190,23 @@ def ciclo_transmision():
     
     while True:
         try:
-            # Selección de medios
+            # Selección de contenido
             video = random.choice(gestor.medios['videos'])
             categoria = determinar_categoria(video['name'])
-            audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
-            audio = random.choice(audios)
+            audios_disponibles = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
+            audio = random.choice(audios_disponibles)
             titulo = generar_titulo(video['name'], categoria)
             
-            # Configuración FFmpeg Ultra-Optimizada 1080p
+            # Mostrar detalles de la transmisión
+            logging.info(f"""
+            🚀 INICIANDO TRANSMISIÓN 🚀
+            📺 Video seleccionado: {video.get('name', 'Sin nombre')}
+            🌿 Categoría detectada: {categoria}
+            🔊 Audio seleccionado: {audio.get('name', 'Sin nombre')}
+            🏷️ Título generado: {titulo}
+            """)
+            
+            # Configuración FFmpeg Ultra-Optimizada
             cmd = [
                 "ffmpeg",
                 "-loglevel", "error",
@@ -242,36 +235,38 @@ def ciclo_transmision():
                 RTMP_URL
             ]
             
-            # Buffer de 10 minutos (600 segundos)
-            logging.info("🔄 Precargando buffer de 10 minutos...")
+            # Precargar buffer de 10 minutos
+            logging.info("⏳ Precargando buffer de 10 minutos...")
             with open(os.devnull, 'w') as devnull:
                 subprocess.run(cmd + ["-t", "600"], stdout=devnull, stderr=devnull)
             
             # Iniciar transmisión principal
             proceso = subprocess.Popen(cmd)
             start_time = time.time()
+            actualizacion_realizada = False
             
-            # Actualizar YouTube después de 10 minutos
             def actualizar_youtube():
-                time.sleep(600)
-                if youtube.youtube:
+                nonlocal actualizacion_realizada
+                time.sleep(600)  # 10 minutos
+                if youtube.youtube and not actualizacion_realizada:
                     youtube.actualizar_transmision(titulo, video['url'])
+                    actualizacion_realizada = True
             
             threading.Thread(target=actualizar_youtube, daemon=True).start()
             
-            # Ciclo de 8 horas
-            while (time.time() - start_time) < 28800:
+            # Mantener transmisión por 8 horas
+            while (time.time() - start_time) < 28800:  # 8 horas = 28800 segundos
                 if proceso.poll() is not None:
                     logging.warning("⚡ Reconectando FFmpeg...")
                     proceso = subprocess.Popen(cmd)
                 time.sleep(30)
             
             proceso.terminate()
-            logging.info("⏳ Ciclo completado. Esperando 10 minutos...")
-            time.sleep(600)
+            logging.info("✅ Ciclo completado. Esperando 10 minutos...")
+            time.sleep(600)  # Espera 10 minutos antes de reiniciar
             
         except Exception as e:
-            logging.error(f"Error en ciclo: {str(e)}")
+            logging.error(f"🔥 Error crítico: {str(e)}")
             time.sleep(60)
 
 @app.route('/health')
@@ -279,5 +274,6 @@ def health_check():
     return "OK", 200
 
 if __name__ == "__main__":
+    logging.info("🎥 Iniciando servicio de transmisión...")
     threading.Thread(target=ciclo_transmision, daemon=True).start()
     serve(app, host='0.0.0.0', port=10000)
