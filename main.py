@@ -202,7 +202,7 @@ class YouTubeManager:
             return None
     
     def iniciar_transmision(self, broadcast_id):
-        max_intentos = 5
+        max_intentos = 6
         espera_base = 10  # segundos
         
         for intento in range(max_intentos):
@@ -300,7 +300,7 @@ def generar_titulo(nombre_video, categoria):
 def manejar_transmision(stream_data, youtube):
     try:
         # Iniciar FFmpeg 2 minutos antes para asegurar conexión
-        tiempo_inicio_ffmpeg = stream_data['start_time'] - timedelta(minutes=2)
+        tiempo_inicio_ffmpeg = stream_data['start_time'] - timedelta(minutes=1)
         espera_ffmpeg = (tiempo_inicio_ffmpeg - datetime.utcnow()).total_seconds()
         
         if espera_ffmpeg > 0:
