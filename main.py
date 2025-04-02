@@ -144,7 +144,6 @@ class YouTubeManager:
         try:
             scheduled_start = datetime.utcnow() + timedelta(minutes=15)
             
-            # Crear transmisión
             broadcast = self.youtube.liveBroadcasts().insert(
                 part="snippet,status",
                 body={
@@ -155,12 +154,12 @@ class YouTubeManager:
                     },
                     "status": {
                         "privacyStatus": "public",
-                        "selfDeclaredMadeForKids": False
+                        "selfDeclaredMadeForKids": False,
+                        "lifeCycleStatus": "ready"  # Estado inicial como listo
                     }
                 }
             ).execute()
             
-            # Crear stream de ingesta con configuración completa
             stream = self.youtube.liveStreams().insert(
                 part="snippet,cdn",
                 body={
@@ -176,18 +175,15 @@ class YouTubeManager:
                 }
             ).execute()
             
-            # Vincular transmisión con stream
             self.youtube.liveBroadcasts().bind(
                 part="id,contentDetails",
                 id=broadcast['id'],
                 streamId=stream['id']
             ).execute()
             
-            # Obtener URL RTMP y nombre del stream
             rtmp_url = stream['cdn']['ingestionInfo']['ingestionAddress']
             stream_name = stream['cdn']['ingestionInfo']['streamName']
             
-            # Subir miniatura
             thumbnail_path = self.generar_miniatura(video_url)
             if thumbnail_path and os.path.exists(thumbnail_path):
                 self.youtube.thumbnails().set(
@@ -204,6 +200,18 @@ class YouTubeManager:
         except Exception as e:
             logging.error(f"Error creando transmisión: {str(e)}")
             return None
+    
+    def iniciar_transmision(self, broadcast_id):
+        try:
+            self.youtube.liveBroadcasts().transition(
+                broadcastStatus="live",
+                id=broadcast_id,
+                part="id,status"
+            ).execute()
+            return True
+        except Exception as e:
+            logging.error(f"Error iniciando transmisión: {str(e)}")
+            return False
 
 def determinar_categoria(nombre_video):
     nombre = nombre_video.lower()
@@ -227,14 +235,12 @@ def ciclo_transmision():
     while True:
         try:
             if not current_stream:
-                # Selección de contenido
                 video = random.choice(gestor.medios['videos'])
                 categoria = determinar_categoria(video['name'])
                 audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
                 audio = random.choice(audios)
                 titulo = generar_titulo(video['name'], categoria)
                 
-                # Crear nueva transmisión en YouTube
                 stream_info = youtube.crear_transmision(titulo, video['url'])
                 if not stream_info:
                     raise Exception("No se pudo crear transmisión YouTube")
@@ -253,57 +259,89 @@ def ciclo_transmision():
                     "start_time": stream_info['scheduled_start'],
                     "video": video,
                     "audio": audio,
-                    "broadcast_id": stream_info['broadcast_id']
+                    "broadcast_id": stream_info['broadcast_id'],
+                    "end_time": stream_info['scheduled_start'] + timedelta(hours=8)
                 }
+
+                # Hilo para manejar el inicio preciso
+                def manejar_transmision(stream_data):
+                    try:
+                        # Esperar hasta el momento exacto del inicio
+                        espera = (stream_data['start_time'] - datetime.utcnow()).total_seconds()
+                        if espera > 0:
+                            logging.info(f"⏳ Esperando {espera:.0f} segundos para iniciar...")
+                            time.sleep(espera)
+                        
+                        # Iniciar transmisión en YouTube
+                        if youtube.iniciar_transmision(stream_data['broadcast_id']):
+                            logging.info("🎥 Transición a LIVE realizada con éxito")
+                            
+                            # Iniciar FFmpeg inmediatamente
+                            cmd = [
+                                "ffmpeg",
+                                "-loglevel", "error",
+                                "-rtbufsize", "100M",
+                                "-re",
+                                "-stream_loop", "-1",
+                                "-i", stream_data['video']['url'],
+                                "-stream_loop", "-1",
+                                "-i", stream_data['audio']['local_path'],
+                                "-map", "0:v:0",
+                                "-map", "1:a:0",
+                                "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:-1:-1,setsar=1",
+                                "-c:v", "libx264",
+                                "-preset", "ultrafast",
+                                "-tune", "zerolatency",
+                                "-x264-params", "keyint=48:min-keyint=48",
+                                "-b:v", "3000k",
+                                "-maxrate", "3000k",
+                                "-bufsize", "6000k",
+                                "-r", "24",
+                                "-g", "48",
+                                "-threads", "1",
+                                "-flush_packets", "1",
+                                "-c:a", "aac",
+                                "-b:a", "96k",
+                                "-ar", "44100",
+                                "-f", "flv",
+                                stream_data['rtmp']
+                            ]
+                            
+                            proceso = subprocess.Popen(cmd)
+                            logging.info("🟢 FFmpeg iniciado - Transmisión en vivo")
+                            
+                            # Monitorear duración
+                            tiempo_inicio = datetime.utcnow()
+                            while (datetime.utcnow() - tiempo_inicio) < timedelta(hours=8):
+                                if proceso.poll() is not None:
+                                    logging.warning("⚡ Reconectando FFmpeg...")
+                                    proceso.kill()
+                                    proceso = subprocess.Popen(cmd)
+                                time.sleep(15)
+                            
+                            proceso.kill()
+                            logging.info("🛑 Transmisión completada (8 horas)")
+                            
+                            # Eliminar transmisión
+                            try:
+                                youtube.youtube.liveBroadcasts().delete(
+                                    id=stream_data['broadcast_id']
+                                ).execute()
+                            except Exception as e:
+                                logging.error(f"Error eliminando transmisión: {str(e)}")
+                            
+                    except Exception as e:
+                        logging.error(f"Error en hilo de transmisión: {str(e)}")
+
+                # Iniciar hilo de transmisión
+                threading.Thread(target=manejar_transmision, args=(current_stream,), daemon=True).start()
                 
-                # Calcular tiempo de espera hasta el inicio
-                wait_time = (current_stream['start_time'] - datetime.utcnow()).total_seconds()
-                if wait_time > 0:
-                    logging.info(f"⏳ Esperando {wait_time/60:.1f} minutos para iniciar...")
-                    time.sleep(wait_time)
-                
-                # Iniciar transmisión FFmpeg
-                cmd = [
-                    "ffmpeg",
-                    "-loglevel", "error",
-                    "-rtbufsize", "100M",
-                    "-re",
-                    "-stream_loop", "-1",
-                    "-i", current_stream['video']['url'],
-                    "-stream_loop", "-1",
-                    "-i", current_stream['audio']['local_path'],
-                    "-map", "0:v:0",
-                    "-map", "1:a:0",
-                    "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:-1:-1,setsar=1",
-                    "-c:v", "libx264",
-                    "-preset", "ultrafast",
-                    "-tune", "zerolatency",
-                    "-x264-params", "keyint=48:min-keyint=48",
-                    "-b:v", "3000k",
-                    "-maxrate", "3000k",
-                    "-bufsize", "6000k",
-                    "-r", "24",
-                    "-g", "48",
-                    "-threads", "1",
-                    "-flush_packets", "1",
-                    "-c:a", "aac",
-                    "-b:a", "96k",
-                    "-ar", "44100",
-                    "-f", "flv",
-                    current_stream['rtmp']
-                ]
-                
-                proceso = subprocess.Popen(cmd)
-                logging.info("🎥 Transmisión en vivo iniciada")
-                
-                # Programar próxima transmisión 7h45m después del inicio
+                # Programar próxima transmisión 7h45m después del inicio actual
                 next_stream_time = current_stream['start_time'] + timedelta(hours=7, minutes=45)
-                current_stream['end_time'] = current_stream['start_time'] + timedelta(hours=8)
-                
+            
             else:
-                # Verificar si es hora de preparar la próxima transmisión
+                # Verificar si es hora de preparar nueva transmisión
                 if datetime.utcnow() >= next_stream_time and not next_stream:
-                    # Preparar próxima transmisión
                     video = random.choice(gestor.medios['videos'])
                     categoria = determinar_categoria(video['name'])
                     audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
@@ -311,37 +349,19 @@ def ciclo_transmision():
                     titulo = generar_titulo(video['name'], categoria)
                     
                     stream_info = youtube.crear_transmision(titulo, video['url'])
-                    if not stream_info:
-                        raise Exception("No se pudo crear próxima transmisión YouTube")
-                    
-                    next_stream = {
-                        "rtmp": stream_info['rtmp'],
-                        "start_time": stream_info['scheduled_start'],
-                        "video": video,
-                        "audio": audio,
-                        "broadcast_id": stream_info['broadcast_id']
-                    }
-                    
-                    logging.info(f"""
-                    🔜 PRÓXIMA TRANSMISIÓN PROGRAMADA 🔜
-                    🏷️ Título: {titulo}
-                    ⏰ Inicio: {stream_info['scheduled_start'].strftime('%Y-%m-%d %H:%M:%S UTC')}
-                    """)
+                    if stream_info:
+                        next_stream = {
+                            "rtmp": stream_info['rtmp'],
+                            "start_time": stream_info['scheduled_start'],
+                            "video": video,
+                            "audio": audio,
+                            "broadcast_id": stream_info['broadcast_id'],
+                            "end_time": stream_info['scheduled_start'] + timedelta(hours=8)
+                        }
+                        logging.info(f"🔜 Nueva transmisión programada: {stream_info['scheduled_start']}")
                 
-                # Verificar si es hora de finalizar la transmisión actual
+                # Rotar transmisiones
                 if datetime.utcnow() >= current_stream['end_time']:
-                    proceso.kill()
-                    logging.info("🛑 Transmisión finalizada")
-                    
-                    # Eliminar transmisión anterior
-                    try:
-                        youtube.youtube.liveBroadcasts().delete(
-                            id=current_stream['broadcast_id']
-                        ).execute()
-                    except Exception as e:
-                        logging.error(f"Error eliminando transmisión: {str(e)}")
-                    
-                    # Pasar a la próxima transmisión
                     current_stream = next_stream
                     next_stream = None
                     logging.info("🔄 Rotando a la próxima transmisión...")
@@ -350,9 +370,9 @@ def ciclo_transmision():
         
         except Exception as e:
             logging.error(f"🔥 Error crítico: {str(e)}")
-            time.sleep(60)
             current_stream = None
             next_stream = None
+            time.sleep(60)
 
 @app.route('/health')
 def health_check():
