@@ -155,7 +155,7 @@ class YouTubeManager:
                     "status": {
                         "privacyStatus": "public",
                         "selfDeclaredMadeForKids": False,
-                        "lifeCycleStatus": "ready"  # Estado inicial como listo
+                        "lifeCycleStatus": "created"
                     }
                 }
             ).execute()
@@ -202,16 +202,25 @@ class YouTubeManager:
             return None
     
     def iniciar_transmision(self, broadcast_id):
-        try:
-            self.youtube.liveBroadcasts().transition(
-                broadcastStatus="live",
-                id=broadcast_id,
-                part="id,status"
-            ).execute()
-            return True
-        except Exception as e:
-            logging.error(f"Error iniciando transmisión: {str(e)}")
-            return False
+        max_intentos = 5
+        espera_base = 10  # segundos
+        
+        for intento in range(max_intentos):
+            try:
+                self.youtube.liveBroadcasts().transition(
+                    broadcastStatus="live",
+                    id=broadcast_id,
+                    part="id,status"
+                ).execute()
+                return True
+            except Exception as e:
+                if intento < max_intentos - 1:
+                    espera = espera_base * (2 ** intento)
+                    logging.warning(f"Intento {intento + 1} fallido. Reintentando en {espera} segundos...")
+                    time.sleep(espera)
+                else:
+                    logging.error(f"Error iniciando transmisión después de {max_intentos} intentos: {str(e)}")
+                    return False
 
 def determinar_categoria(nombre_video):
     nombre = nombre_video.lower()
@@ -224,6 +233,81 @@ def generar_titulo(nombre_video, categoria):
     ubicaciones = ['Cabaña', 'Sala', 'Cueva', 'Montaña', 'Departamento', 'Cafetería']
     ubicacion = next((p for p in ubicaciones if p.lower() in nombre_video.lower()), 'Entorno')
     return f"{ubicacion} • Sonidos de {categoria.capitalize()} 🌿 24/7"
+
+def manejar_transmision(stream_data, youtube):
+    try:
+        # Iniciar FFmpeg 2 minutos antes para asegurar conexión
+        tiempo_inicio_ffmpeg = stream_data['start_time'] - timedelta(minutes=2)
+        espera_ffmpeg = (tiempo_inicio_ffmpeg - datetime.utcnow()).total_seconds()
+        
+        if espera_ffmpeg > 0:
+            logging.info(f"⏳ Esperando {espera_ffmpeg:.0f} segundos para iniciar FFmpeg...")
+            time.sleep(espera_ffmpeg)
+        
+        cmd = [
+            "ffmpeg",
+            "-loglevel", "error",
+            "-rtbufsize", "100M",
+            "-re",
+            "-stream_loop", "-1",
+            "-i", stream_data['video']['url'],
+            "-stream_loop", "-1",
+            "-i", stream_data['audio']['local_path'],
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:-1:-1,setsar=1",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-tune", "zerolatency",
+            "-x264-params", "keyint=48:min-keyint=48",
+            "-b:v", "3000k",
+            "-maxrate", "3000k",
+            "-bufsize", "6000k",
+            "-r", "24",
+            "-g", "48",
+            "-threads", "1",
+            "-flush_packets", "1",
+            "-c:a", "aac",
+            "-b:a", "96k",
+            "-ar", "44100",
+            "-f", "flv",
+            stream_data['rtmp']
+        ]
+        
+        proceso = subprocess.Popen(cmd)
+        logging.info("🟢 FFmpeg iniciado - Estableciendo conexión RTMP...")
+        
+        # Esperar a que FFmpeg establezca la conexión
+        time.sleep(15)
+        
+        # Intentar transición a LIVE con reintentos
+        if youtube.iniciar_transmision(stream_data['broadcast_id']):
+            logging.info("🎥 Transición a LIVE realizada con éxito")
+        else:
+            raise Exception("No se pudo iniciar la transmisión en YouTube")
+        
+        # Monitorear duración
+        tiempo_inicio = datetime.utcnow()
+        while (datetime.utcnow() - tiempo_inicio) < timedelta(hours=8):
+            if proceso.poll() is not None:
+                logging.warning("⚡ Reconectando FFmpeg...")
+                proceso.kill()
+                proceso = subprocess.Popen(cmd)
+            time.sleep(15)
+        
+        proceso.kill()
+        logging.info("🛑 Transmisión completada (8 horas)")
+        
+        # Eliminar transmisión
+        try:
+            youtube.youtube.liveBroadcasts().delete(
+                id=stream_data['broadcast_id']
+            ).execute()
+        except Exception as e:
+            logging.error(f"Error eliminando transmisión: {str(e)}")
+            
+    except Exception as e:
+        logging.error(f"Error en hilo de transmisión: {str(e)}")
 
 def ciclo_transmision():
     gestor = GestorContenido()
@@ -263,84 +347,17 @@ def ciclo_transmision():
                     "end_time": stream_info['scheduled_start'] + timedelta(hours=8)
                 }
 
-                # Hilo para manejar el inicio preciso
-                def manejar_transmision(stream_data):
-                    try:
-                        # Esperar hasta el momento exacto del inicio
-                        espera = (stream_data['start_time'] - datetime.utcnow()).total_seconds()
-                        if espera > 0:
-                            logging.info(f"⏳ Esperando {espera:.0f} segundos para iniciar...")
-                            time.sleep(espera)
-                        
-                        # Iniciar transmisión en YouTube
-                        if youtube.iniciar_transmision(stream_data['broadcast_id']):
-                            logging.info("🎥 Transición a LIVE realizada con éxito")
-                            
-                            # Iniciar FFmpeg inmediatamente
-                            cmd = [
-                                "ffmpeg",
-                                "-loglevel", "error",
-                                "-rtbufsize", "100M",
-                                "-re",
-                                "-stream_loop", "-1",
-                                "-i", stream_data['video']['url'],
-                                "-stream_loop", "-1",
-                                "-i", stream_data['audio']['local_path'],
-                                "-map", "0:v:0",
-                                "-map", "1:a:0",
-                                "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:-1:-1,setsar=1",
-                                "-c:v", "libx264",
-                                "-preset", "ultrafast",
-                                "-tune", "zerolatency",
-                                "-x264-params", "keyint=48:min-keyint=48",
-                                "-b:v", "3000k",
-                                "-maxrate", "3000k",
-                                "-bufsize", "6000k",
-                                "-r", "24",
-                                "-g", "48",
-                                "-threads", "1",
-                                "-flush_packets", "1",
-                                "-c:a", "aac",
-                                "-b:a", "96k",
-                                "-ar", "44100",
-                                "-f", "flv",
-                                stream_data['rtmp']
-                            ]
-                            
-                            proceso = subprocess.Popen(cmd)
-                            logging.info("🟢 FFmpeg iniciado - Transmisión en vivo")
-                            
-                            # Monitorear duración
-                            tiempo_inicio = datetime.utcnow()
-                            while (datetime.utcnow() - tiempo_inicio) < timedelta(hours=8):
-                                if proceso.poll() is not None:
-                                    logging.warning("⚡ Reconectando FFmpeg...")
-                                    proceso.kill()
-                                    proceso = subprocess.Popen(cmd)
-                                time.sleep(15)
-                            
-                            proceso.kill()
-                            logging.info("🛑 Transmisión completada (8 horas)")
-                            
-                            # Eliminar transmisión
-                            try:
-                                youtube.youtube.liveBroadcasts().delete(
-                                    id=stream_data['broadcast_id']
-                                ).execute()
-                            except Exception as e:
-                                logging.error(f"Error eliminando transmisión: {str(e)}")
-                            
-                    except Exception as e:
-                        logging.error(f"Error en hilo de transmisión: {str(e)}")
-
                 # Iniciar hilo de transmisión
-                threading.Thread(target=manejar_transmision, args=(current_stream,), daemon=True).start()
+                threading.Thread(
+                    target=manejar_transmision,
+                    args=(current_stream, youtube),
+                    daemon=True
+                ).start()
                 
                 # Programar próxima transmisión 7h45m después del inicio actual
                 next_stream_time = current_stream['start_time'] + timedelta(hours=7, minutes=45)
             
             else:
-                # Verificar si es hora de preparar nueva transmisión
                 if datetime.utcnow() >= next_stream_time and not next_stream:
                     video = random.choice(gestor.medios['videos'])
                     categoria = determinar_categoria(video['name'])
@@ -360,7 +377,6 @@ def ciclo_transmision():
                         }
                         logging.info(f"🔜 Nueva transmisión programada: {stream_info['scheduled_start']}")
                 
-                # Rotar transmisiones
                 if datetime.utcnow() >= current_stream['end_time']:
                     current_stream = next_stream
                     next_stream = None
