@@ -163,7 +163,7 @@ class YouTubeManager:
                         "enableAutoStart": True,
                         "enableAutoStop": True,
                         "enableArchive": True,  # Clave para guardar el video
-                        "lifeCycleStatus": "live"
+                        "lifeCycleStatus": "ready"
                     }
                 }
             ).execute()
