@@ -218,7 +218,7 @@ class YouTubeManager:
             logging.error(f"Error creación transmisión: {str(e)}")
             return None
     
-     def iniciar_transmision(self, broadcast_id):
+def iniciar_transmision(self, broadcast_id):
         max_intentos = 5
         espera_base = 15  # Segundos
         
@@ -345,7 +345,7 @@ def manejar_transmision(stream_data, youtube):
             stream_data['rtmp']
         ]
         
-         proceso = subprocess.Popen(cmd)
+        proceso = subprocess.Popen(cmd)
         logging.info("🟢 FFmpeg iniciado - Estabilizando flujo...")
         
         # Esperar estabilización inicial
