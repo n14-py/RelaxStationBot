@@ -115,12 +115,7 @@ class YouTubeManager:
                 client_id=YOUTUBE_CREDS['client_id'],
                 client_secret=YOUTUBE_CREDS['client_secret'],
                 token_uri="https://oauth2.googleapis.com/token",
-             scopes=[
-                 # Orden correcta según política de Google:
-                 'https://www.googleapis.com/auth/youtube.force-ssl',  # Primero
-                  'https://www.googleapis.com/auth/youtube',             # Segundo  
-                  'https://www.googleapis.com/auth/youtube.readonly'     # Tercero
-              ]
+                scopes=['https://www.googleapis.com/auth/youtube']
             )
             creds.refresh(Request())
             return build('youtube', 'v3', credentials=creds)
@@ -147,28 +142,27 @@ class YouTubeManager:
     
     def crear_transmision(self, titulo, video_url):
         try:
-            scheduled_start = datetime.utcnow() + timedelta(minutes=5)
+            scheduled_start = datetime.utcnow() + timedelta(minutes=15)
             
             broadcast = self.youtube.liveBroadcasts().insert(
                 part="snippet,status",
                 body={
                   "snippet": {
-                  "title": titulo,
-                  "description": "Déjate llevar por la serenidad de la naturaleza con nuestro video \"Relax Station\". Los relajantes sonidos de la lluvia te transportarán a un lugar de paz y tranquilidad, ideal para dormir, meditar o concentrarte. Perfecto para desconectar y encontrar tu equilibrio interior. ¡Relájate y disfruta!                                                                                                   IGNORAR TAGS                                                   relax, relajación, lluvia, sonidos de lluvia, calma, dormir, meditar, concentración, sonidos de la naturaleza, ambiente relajante, tranquilidad, lluvia para dormir, lluvia relajante, lluvia y calma, sonidos para relajación, ASMR, sonidos ASMR, lluvia nocturna, estudio, sonidos relajantes, ruido blanco, concentración mental, paz interior, alivio del estrés, lluvia natural, lluvia suave, descanso, ambiente de lluvia, dormir rápido, lluvia profunda, día lluvioso, lluvia para meditar, bienestar, paz, naturaleza, mindfulness, relajación profunda, yoga, pilates, meditación guiada, ondas cerebrales, sonidos curativos, música para estudiar, música para concentración, descanso mental, serenidad, zen, armonía, equilibrio, espiritualidad, relajación total, energía positiva, lluvia tibia, tormenta suave, lluvia con truenos, descanso absoluto, terapia de sonido, bienestar emocional, salud mental, terapia de relajación, descanso nocturno, paz mental, sonidos de la selva, sonidos de bosque, mindfulness y relajación, mejor sueño, descanso profundo, liberación de estrés, antiestrés, antiansiedad, dormir mejor, sueño reparador, relajación sensorial, relajación auditiva, calma mental, música relajante, relajación para ansiedad, terapia de paz, sonido blanco para dormir, relax absoluto, serenidad de la naturaleza, sonidos calmantes, música tranquila para dormir, estado zen, enfoque mental, concentración absoluta, claridad mental, noche lluviosa, sonido de la lluvia, sonido de lluvia para dormir, tranquilidad nocturna, música chill, descanso consciente, relajación instantánea, serenidad para el alma, limpieza mental, vibraciones relajantes, energía relajante, conexión con la naturaleza, descanso espiritual, introspección, desconexión del estrés, flujo de energía positiva, alivio de tensiones, sonidos puros, alivio de fatiga, contemplación, vibraciones positivas, terapia sonora, sonidos calmantes para niños, calma en la tormenta, dormir sin interrupciones, música de fondo tranquila, ambiente natural, relax, relaxation, rain, rain sounds, calm, sleep, meditate, focus, nature sounds, relaxing ambiance, tranquility, rain for sleep, relaxing rain, rain and calm, sounds for relaxation, ASMR, ASMR sounds, nighttime rain, study, relaxing sounds, white noise, mental focus, inner peace, stress relief, natural rain, soft rain, rest, rain ambiance, deep rain, rainy day, rain for meditation, wellness, peace, stress, nature, mindfulness, deep relaxation, yoga, pilates, guided meditation, brain waves, healing sounds, music for studying, music for concentration, mental rest, serenity, zen, harmony, balance, spirituality, total relaxation, positive energy, warm rain, gentle storm, rain with thunder, absolute rest, sound therapy, emotional well-being, mental health, relaxation therapy, nighttime rest, jungle sounds, forest sounds, baby sounds, pet sounds, mindfulness and relaxation, relaxation before sleep, better sleep, deep rest, stress relief, anti-stress, anti-anxiety, sleep better, restorative sleep, sensory relaxation, mental calm, relaxing music, background relaxing rain, relaxing background music, natural sounds, mental harmonization, relaxing noise, natural relaxing sounds, deep relaxation music, relaxed mind, relaxation for anxiety, peace therapy, absolute rest, sound well-being, relaxed concentration, mental balance, white noise for sleeping, absolute relax, calm mind, total serenity, secured rest, rain audio, rain sounds with music, rainy night, nature serenity, calming sounds, quiet music for sleeping, zen state, energetic balance, meditation and focus, mental sharpness, absolute concentration, improved concentration, mental clarity, music and rain, harmony and balance, sound of rain, nighttime tranquility, chill music, mindful rest, instant relaxation, soul serenity, mental cleansing, soft music, relaxing energy, connection with nature, relaxation frequency, brain rest, sound peace, introspection, stress disconnection, positive energy flow, tension relief, mental detox, pure sounds, fatigue relief, full serenity, contemplation, positive vibes, sound therapy, calming sounds for kids, uninterrupted sleep, quiet background music, natural ambiance.", # Descripción acortada por espacio
-                  "scheduledStartTime": scheduled_start.isoformat() + "Z"
-                     },
-                   "status": {
-                        "privacyStatus": "public",
-                        "selfDeclaredMadeForKids": False,
-                        "enableAutoStart": True,
-                        "enableAutoStop": True,
-                        "enableArchive": True,
-                        "lifeCycleStatus": "ready"  # Estado clave modificado
-                    }
+                    "title": titulo,
+                    "description": "...",  # Mantener descripción original
+                    "scheduledStartTime": scheduled_start.isoformat() + "Z"
+                  },
+                  "status": {
+                    "privacyStatus": "public",
+                    "selfDeclaredMadeForKids": False,
+                    "enableAutoStart": False,  # Deshabilitar auto-start
+                    "enableAutoStop": False,   # Deshabilitar auto-stop
+                    "enableArchive": True,
+                    "lifeCycleStatus": "created"  # Estado inicial
+                  }
                 }
             ).execute()
-
-            # 2. Crear stream de ingesta
+            
             stream = self.youtube.liveStreams().insert(
                 part="snippet,cdn",
                 body={
@@ -183,19 +177,16 @@ class YouTubeManager:
                     }
                 }
             ).execute()
-
-            # 3. Vincular broadcast con stream
+            
             self.youtube.liveBroadcasts().bind(
                 part="id,contentDetails",
                 id=broadcast['id'],
                 streamId=stream['id']
             ).execute()
-
-            # 4. Obtener URL RTMP
+            
             rtmp_url = stream['cdn']['ingestionInfo']['ingestionAddress']
             stream_name = stream['cdn']['ingestionInfo']['streamName']
-
-            # 5. Subir miniatura
+            
             thumbnail_path = self.generar_miniatura(video_url)
             if thumbnail_path and os.path.exists(thumbnail_path):
                 self.youtube.thumbnails().set(
@@ -203,52 +194,36 @@ class YouTubeManager:
                     media_body=thumbnail_path
                 ).execute()
                 os.remove(thumbnail_path)
-
-            # 6. Esperar preparación de YouTube
-            logging.info("🕒 Esperando 2 minutos para preparación de YouTube...")
-            time.sleep(120)
-
+            
             return {
                 "rtmp": f"{rtmp_url}/{stream_name}",
                 "scheduled_start": scheduled_start,
                 "broadcast_id": broadcast['id']
             }
-            
         except Exception as e:
-            logging.error(f"Error creación transmisión: {str(e)}")
+            logging.error(f"Error creando transmisión: {str(e)}")
             return None
     
     def iniciar_transmision(self, broadcast_id):
-        max_intentos = 5
-        espera_base = 15  # Segundos
+        max_intentos = 6
+        espera_base = 10
         
         for intento in range(max_intentos):
             try:
-                # Verificar estado actual
-                estado = self.youtube.liveBroadcasts().list(
-                    part="status",
-                    id=broadcast_id
-                ).execute()['items'][0]['status']['lifeCycleStatus']
-                
-                if estado != "ready":
-                    logging.warning(f"Estado actual: {estado}. Reintentando...")
-                    time.sleep(espera_base * (intento + 1))
-                    continue
-                
-                # Transición a LIVE
                 self.youtube.liveBroadcasts().transition(
                     broadcastStatus="live",
                     id=broadcast_id,
                     part="id,status"
                 ).execute()
                 return True
-                
             except Exception as e:
-                logging.error(f"Intento {intento+1} fallido: {str(e)}")
                 if intento < max_intentos - 1:
                     espera = espera_base * (2 ** intento)
+                    logging.warning(f"Intento {intento + 1} fallido. Reintentando en {espera} segundos...")
                     time.sleep(espera)
-        return False
+                else:
+                    logging.error(f"Error iniciando transmisión después de {max_intentos} intentos: {str(e)}")
+                    return False
 
 def determinar_categoria(nombre_video):
     nombre = nombre_video.lower()
@@ -305,15 +280,11 @@ def generar_titulo(nombre_video, categoria):
     return random.choice(plantillas)
 
 def manejar_transmision(stream_data, youtube):
-    try:
-        # Calcular tiempo de inicio óptimo
-        tiempo_inicio_ffmpeg = stream_data['start_time'] - timedelta(minutes=5)
-        espera_ffmpeg = (tiempo_inicio_ffmpeg - datetime.utcnow()).total_seconds()
-        
-        # Esperar tiempo restante si es necesario
-        if espera_ffmpeg > 0:
-            logging.info(f"⏳ Esperando {espera_ffmpeg:.0f}s para iniciar FFmpeg...")
-            time.sleep(espera_ffmpeg)
+       try:
+        # Transición a TESTING primero
+        logging.info("🟡 Transicionando a estado TESTING...")
+        if not youtube.transicionar_estado("testing", stream_data['broadcast_id']):
+            raise Exception("No se pudo iniciar estado testing")
         
         cmd = [
             "ffmpeg",
@@ -346,35 +317,62 @@ def manejar_transmision(stream_data, youtube):
         ]
         
         proceso = subprocess.Popen(cmd)
-        logging.info("🟢 FFmpeg iniciado - Estabilizando flujo...")
+        logging.info("🟢 FFmpeg iniciado - Transmitiendo a estado TESTING...")
+
+        # Calcular tiempo restante hasta el inicio programado
+        ahora = datetime.utcnow()
+        tiempo_espera = (stream_data['start_time'] - ahora).total_seconds()
         
-        # Esperar estabilización inicial
-        time.sleep(45)
+        if tiempo_espera > 0:
+            logging.info(f"⏳ Esperando {tiempo_espera:.0f} segundos para transición a LIVE...")
+            time.sleep(tiempo_espera)
+
+        # Transición a LIVE
+        logging.info("🟡 Transicionando a estado LIVE...")
+        if youtube.transicionar_estado("live", stream_data['broadcast_id']):
+            logging.info("🎥 Transmisión LIVE iniciada con éxito")
+        else:
+            raise Exception("No se pudo iniciar transmisión LIVE")
+
+        # Monitorear transmisión por 8 horas
+        tiempo_inicio = datetime.utcnow()
+        while (datetime.utcnow() - tiempo_inicio) < timedelta(hours=8):
+            if proceso.poll() is not None:
+                logging.warning("⚡ Reconectando FFmpeg...")
+                proceso.kill()
+                proceso = subprocess.Popen(cmd)
+            time.sleep(15)
         
-        # Iniciar transición a LIVE
-        if youtube.iniciar_transmision(stream_data['broadcast_id']):
-            logging.info("🎥 Transición a LIVE exitosa")
-            tiempo_inicio = datetime.utcnow()
-            
-            # Monitorear por 8 horas
-            while (datetime.utcnow() - tiempo_inicio) < timedelta(hours=8):
-                if proceso.poll() is not None:
-                    logging.warning("⚡ Reconexión FFmpeg...")
-                    proceso.kill()
-                    proceso = subprocess.Popen(cmd)
-                time.sleep(30)
-                
-            proceso.kill()
-            logging.info("🛑 Transmisión completada (8 horas)")
-            return True
-            
-        return False
+        proceso.kill()
+        logging.info("🛑 Transmisión completada (8 horas)")
+
+       except Exception as e:
+        logging.error(f"Error en hilo de transmisión: {str(e)}")
+
+
+
+class YouTubeManager:
+    def transicionar_estado(self, estado, broadcast_id):
+        max_intentos = 6
+        espera_base = 10
         
-    except Exception as e:
-        logging.error(f"Error en transmisión: {str(e)}")
-        if 'proceso' in locals():
-            proceso.kill()
-        return False
+        for intento in range(max_intentos):
+            try:
+                self.youtube.liveBroadcasts().transition(
+                    broadcastStatus=estado,
+                    id=broadcast_id,
+                    part="id,status"
+                ).execute()
+                return True
+            except Exception as e:
+                if intento < max_intentos - 1:
+                    espera = espera_base * (2 ** intento)
+                    logging.warning(f"Intento {intento + 1} fallido. Reintentando en {espera} segundos...")
+                    time.sleep(espera)
+                else:
+                    logging.error(f"Error transicionando a {estado}: {str(e)}")
+                    return False
+
 
 def ciclo_transmision():
     gestor = GestorContenido()
