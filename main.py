@@ -140,7 +140,7 @@ class YouTubeManager:
             logging.error(f"Error generando miniatura: {str(e)}")
             return None
     
-def crear_transmision(self, titulo, video_url):
+    def crear_transmision(self, titulo, video_url):
         try:
             scheduled_start = datetime.utcnow() + timedelta(minutes=15)
             
@@ -148,18 +148,18 @@ def crear_transmision(self, titulo, video_url):
                 part="snippet,status",
                 body={
                   "snippet": {
-                    "title": titulo,
-                    "description": "...",  # Mantener descripción original
-                    "scheduledStartTime": scheduled_start.isoformat() + "Z"
-                  },
-                  "status": {
-                    "privacyStatus": "public",
-                    "selfDeclaredMadeForKids": False,
-                    "enableAutoStart": False,
-                    "enableAutoStop": False,
-                    "enableArchive": True,
-                    "lifeCycleStatus": "created"
-                  }
+                  "title": titulo,
+                  "description": "Déjate llevar por la serenidad de la naturaleza...", # Descripción acortada
+                  "scheduledStartTime": scheduled_start.isoformat() + "Z"
+                     },
+                    "status": {
+                        "privacyStatus": "public",
+                        "selfDeclaredMadeForKids": False,
+                        "enableAutoStart": True,
+                        "enableAutoStop": True,
+                        "enableArchive": True,
+                        "lifeCycleStatus": "ready"
+                    }
                 }
             ).execute()
             
@@ -204,14 +204,14 @@ def crear_transmision(self, titulo, video_url):
             logging.error(f"Error creando transmisión: {str(e)}")
             return None
     
-def transicionar_estado(self, estado, broadcast_id):
+    def iniciar_transmision(self, broadcast_id):
         max_intentos = 6
         espera_base = 10
         
         for intento in range(max_intentos):
             try:
                 self.youtube.liveBroadcasts().transition(
-                    broadcastStatus=estado,
+                    broadcastStatus="live",
                     id=broadcast_id,
                     part="id,status"
                 ).execute()
@@ -222,7 +222,7 @@ def transicionar_estado(self, estado, broadcast_id):
                     logging.warning(f"Intento {intento + 1} fallido. Reintentando en {espera} segundos...")
                     time.sleep(espera)
                 else:
-                    logging.error(f"Error transicionando a {estado}: {str(e)}")
+                    logging.error(f"Error iniciando transmisión después de {max_intentos} intentos: {str(e)}")
                     return False
 
 def determinar_categoria(nombre_video):
@@ -280,12 +280,8 @@ def generar_titulo(nombre_video, categoria):
     return random.choice(plantillas)
 
 def manejar_transmision(stream_data, youtube):
-       try:
-        # Transición a TESTING primero
-        logging.info("🟡 Transicionando a estado TESTING...")
-        if not youtube.transicionar_estado("testing", stream_data['broadcast_id']):
-            raise Exception("No se pudo iniciar estado testing")
-        
+    try:
+        # Iniciar FFmpeg inmediatamente
         cmd = [
             "ffmpeg",
             "-loglevel", "error",
@@ -317,24 +313,21 @@ def manejar_transmision(stream_data, youtube):
         ]
         
         proceso = subprocess.Popen(cmd)
-        logging.info("🟢 FFmpeg iniciado - Transmitiendo a estado TESTING...")
-
-        # Calcular tiempo restante hasta el inicio programado
-        ahora = datetime.utcnow()
-        tiempo_espera = (stream_data['start_time'] - ahora).total_seconds()
+        logging.info("🟢 FFmpeg iniciado - Estableciendo conexión RTMP...")
         
+        # Calcular tiempo de espera hasta el inicio programado
+        tiempo_espera = (stream_data['start_time'] - datetime.utcnow()).total_seconds()
         if tiempo_espera > 0:
-            logging.info(f"⏳ Esperando {tiempo_espera:.0f} segundos para transición a LIVE...")
+            logging.info(f"⏳ Esperando {tiempo_espera:.0f} segundos para iniciar transmisión...")
             time.sleep(tiempo_espera)
-
-        # Transición a LIVE
-        logging.info("🟡 Transicionando a estado LIVE...")
-        if youtube.transicionar_estado("live", stream_data['broadcast_id']):
-            logging.info("🎥 Transmisión LIVE iniciada con éxito")
+        
+        # Iniciar transmisión en el momento exacto
+        if youtube.iniciar_transmision(stream_data['broadcast_id']):
+            logging.info("🎥 Transición a LIVE realizada con éxito")
         else:
-            raise Exception("No se pudo iniciar transmisión LIVE")
-
-        # Monitorear transmisión por 8 horas
+            raise Exception("No se pudo iniciar la transmisión en YouTube")
+        
+        # Mantener la transmisión por 8 horas
         tiempo_inicio = datetime.utcnow()
         while (datetime.utcnow() - tiempo_inicio) < timedelta(hours=8):
             if proceso.poll() is not None:
@@ -346,33 +339,8 @@ def manejar_transmision(stream_data, youtube):
         proceso.kill()
         logging.info("🛑 Transmisión completada (8 horas)")
 
-       except Exception as e:
+    except Exception as e:
         logging.error(f"Error en hilo de transmisión: {str(e)}")
-
-
-
-class YouTubeManager:
-    def transicionar_estado(self, estado, broadcast_id):
-        max_intentos = 6
-        espera_base = 10
-        
-        for intento in range(max_intentos):
-            try:
-                self.youtube.liveBroadcasts().transition(
-                    broadcastStatus=estado,
-                    id=broadcast_id,
-                    part="id,status"
-                ).execute()
-                return True
-            except Exception as e:
-                if intento < max_intentos - 1:
-                    espera = espera_base * (2 ** intento)
-                    logging.warning(f"Intento {intento + 1} fallido. Reintentando en {espera} segundos...")
-                    time.sleep(espera)
-                else:
-                    logging.error(f"Error transicionando a {estado}: {str(e)}")
-                    return False
-
 
 def ciclo_transmision():
     gestor = GestorContenido()
@@ -387,20 +355,17 @@ def ciclo_transmision():
                 video = random.choice(gestor.medios['videos'])
                 categoria = determinar_categoria(video['name'])
                 
-                # Filtrar audios por categoría del video (MODIFICACIÓN CLAVE)
                 audios_compatibles = [
                     a for a in gestor.medios['sonidos_naturaleza'] 
                     if a['local_path'] and categoria in a['name'].lower()
                 ]
                 
-                # Si no hay coincidencias, ampliar búsqueda
                 if not audios_compatibles:
                     audios_compatibles = [
                         a for a in gestor.medios['sonidos_naturaleza']
                         if a['local_path'] and categoria in determinar_categoria(a['name'])
                     ]
                 
-                # Si sigue sin haber resultados, usar todos los audios disponibles
                 if not audios_compatibles:
                     audios_compatibles = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
                 
@@ -458,8 +423,8 @@ def ciclo_transmision():
                         }
                         logging.info(f"🔜 Nueva transmisión programada: {stream_info['scheduled_start']}")
                 
-                if datetime.utcnow() >= current_stream['end_time']:
-                    if next_stream:
+                    if datetime.utcnow() >= current_stream['end_time']:
+                     if next_stream:
                         threading.Thread(
                             target=manejar_transmision,
                             args=(next_stream, youtube),
