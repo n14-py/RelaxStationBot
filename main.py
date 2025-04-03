@@ -140,29 +140,41 @@ class YouTubeManager:
             logging.error(f"Error generando miniatura: {str(e)}")
             return None
     
+    def verificar_estado_transmision(self, broadcast_id):
+        try:
+            broadcast = self.youtube.liveBroadcasts().list(
+                part="status",
+                id=broadcast_id
+            ).execute()
+            
+            return broadcast['items'][0]['status']['lifeCycleStatus']
+        except Exception as e:
+            logging.error(f"Error verificando estado: {str(e)}")
+            return None
+    
     def crear_transmision(self, titulo, video_url):
         try:
             scheduled_start = datetime.utcnow() + timedelta(minutes=5)
             
+            # Crear broadcast
             broadcast = self.youtube.liveBroadcasts().insert(
                 part="snippet,status",
                 body={
                   "snippet": {
-                  "title": titulo,
-                  "description": "Déjate llevar por la serenidad de la naturaleza...", # Descripción acortada
-                  "scheduledStartTime": scheduled_start.isoformat() + "Z"
-                     },
-                    "status": {
-                        "privacyStatus": "public",
-                        "selfDeclaredMadeForKids": False,
-                        "enableAutoStart": True,
-                        "enableAutoStop": True,
-                        "enableArchive": True,
-                        "lifeCycleStatus": "ready"
-                    }
+                    "title": titulo,
+                    "description": "Déjate llevar por la serenidad de la naturaleza...",
+                    "scheduledStartTime": scheduled_start.isoformat() + "Z"
+                  },
+                  "status": {
+                    "privacyStatus": "public",
+                    "selfDeclaredMadeForKids": False,
+                    "enableAutoStart": False,
+                    "enableAutoStop": True
+                  }
                 }
             ).execute()
             
+            # Crear stream
             stream = self.youtube.liveStreams().insert(
                 part="snippet,cdn",
                 body={
@@ -178,15 +190,28 @@ class YouTubeManager:
                 }
             ).execute()
             
+            # Vincular broadcast y stream
             self.youtube.liveBroadcasts().bind(
                 part="id,contentDetails",
                 id=broadcast['id'],
                 streamId=stream['id']
             ).execute()
             
+            # Esperar hasta que la transmisión esté lista
+            estado = ""
+            while estado != "ready":
+                estado = self.verificar_estado_transmision(broadcast['id'])
+                logging.info(f"Estado de la transmisión: {estado}")
+                if estado != "ready":
+                    time.sleep(10)
+            
+            logging.info("✅ Transmisión lista y en estado READY")
+            
+            # Obtener detalles RTMP
             rtmp_url = stream['cdn']['ingestionInfo']['ingestionAddress']
             stream_name = stream['cdn']['ingestionInfo']['streamName']
             
+            # Subir miniatura
             thumbnail_path = self.generar_miniatura(video_url)
             if thumbnail_path and os.path.exists(thumbnail_path):
                 self.youtube.thumbnails().set(
@@ -281,7 +306,13 @@ def generar_titulo(nombre_video, categoria):
 
 def manejar_transmision(stream_data, youtube):
     try:
-        # Iniciar FFmpeg inmediatamente
+        # Esperar hasta 1 minuto antes del inicio programado
+        tiempo_espera = (stream_data['start_time'] - datetime.utcnow()).total_seconds() - 60
+        if tiempo_espera > 0:
+            logging.info(f"⏳ Esperando {tiempo_espera:.0f} segundos para preparar transmisión...")
+            time.sleep(tiempo_espera)
+        
+        # Iniciar FFmpeg
         cmd = [
             "ffmpeg",
             "-loglevel", "error",
@@ -315,15 +346,15 @@ def manejar_transmision(stream_data, youtube):
         proceso = subprocess.Popen(cmd)
         logging.info("🟢 FFmpeg iniciado - Estableciendo conexión RTMP...")
         
-        # Calcular tiempo de espera hasta el inicio programado
-        tiempo_espera = (stream_data['start_time'] - datetime.utcnow()).total_seconds()
-        if tiempo_espera > 0:
-            logging.info(f"⏳ Esperando {tiempo_espera:.0f} segundos para iniciar transmisión...")
-            time.sleep(tiempo_espera)
+        # Esperar hasta el inicio exacto
+        tiempo_restante = (stream_data['start_time'] - datetime.utcnow()).total_seconds()
+        if tiempo_restante > 0:
+            logging.info(f"⏰ Esperando inicio programado: {tiempo_restante:.0f} segundos restantes")
+            time.sleep(tiempo_restante)
         
-        # Iniciar transmisión en el momento exacto
+        # Iniciar transmisión
         if youtube.iniciar_transmision(stream_data['broadcast_id']):
-            logging.info("🎥 Transición a LIVE realizada con éxito")
+            logging.info("🎥 Transmisión LIVE iniciada correctamente")
         else:
             raise Exception("No se pudo iniciar la transmisión en YouTube")
         
@@ -394,6 +425,8 @@ def ciclo_transmision():
                     "broadcast_id": stream_info['broadcast_id'],
                     "end_time": stream_info['scheduled_start'] + timedelta(hours=8)
                 }
+
+
 
                 threading.Thread(
                     target=manejar_transmision,
