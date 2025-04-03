@@ -115,11 +115,7 @@ class YouTubeManager:
                 client_id=YOUTUBE_CREDS['client_id'],
                 client_secret=YOUTUBE_CREDS['client_secret'],
                 token_uri="https://oauth2.googleapis.com/token",
-                scopes = [
-                'https://www.googleapis.com/auth/youtube',
-                'https://www.googleapis.com/auth/youtube.force-ssl',
-                'https://www.googleapis.com/auth/youtube.readonly'
-                          ]
+                scopes=['https://www.googleapis.com/auth/youtube']
             )
             creds.refresh(Request())
             return build('youtube', 'v3', credentials=creds)
