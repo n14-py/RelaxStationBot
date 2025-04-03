@@ -140,9 +140,9 @@ class YouTubeManager:
             logging.error(f"Error generando miniatura: {str(e)}")
             return None
     
-    def crear_transmision(self, titulo, video_url):
+def crear_transmision(self, titulo, video_url):
         try:
-            scheduled_start = datetime.utcnow() + timedelta(minutes=5)
+            scheduled_start = datetime.utcnow() + timedelta(minutes=15)
             
             broadcast = self.youtube.liveBroadcasts().insert(
                 part="snippet,status",
@@ -155,10 +155,10 @@ class YouTubeManager:
                   "status": {
                     "privacyStatus": "public",
                     "selfDeclaredMadeForKids": False,
-                    "enableAutoStart": False,  # Deshabilitar auto-start
-                    "enableAutoStop": False,   # Deshabilitar auto-stop
+                    "enableAutoStart": False,
+                    "enableAutoStop": False,
                     "enableArchive": True,
-                    "lifeCycleStatus": "created"  # Estado inicial
+                    "lifeCycleStatus": "created"
                   }
                 }
             ).execute()
@@ -204,14 +204,14 @@ class YouTubeManager:
             logging.error(f"Error creando transmisión: {str(e)}")
             return None
     
-    def iniciar_transmision(self, broadcast_id):
+def transicionar_estado(self, estado, broadcast_id):
         max_intentos = 6
         espera_base = 10
         
         for intento in range(max_intentos):
             try:
                 self.youtube.liveBroadcasts().transition(
-                    broadcastStatus="live",
+                    broadcastStatus=estado,
                     id=broadcast_id,
                     part="id,status"
                 ).execute()
@@ -222,7 +222,7 @@ class YouTubeManager:
                     logging.warning(f"Intento {intento + 1} fallido. Reintentando en {espera} segundos...")
                     time.sleep(espera)
                 else:
-                    logging.error(f"Error iniciando transmisión después de {max_intentos} intentos: {str(e)}")
+                    logging.error(f"Error transicionando a {estado}: {str(e)}")
                     return False
 
 def determinar_categoria(nombre_video):
