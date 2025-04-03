@@ -147,7 +147,7 @@ class YouTubeManager:
     
     def crear_transmision(self, titulo, video_url):
         try:
-            scheduled_start = datetime.utcnow() + timedelta(minutes=15)
+            scheduled_start = datetime.utcnow() + timedelta(minutes=5)
             
             broadcast = self.youtube.liveBroadcasts().insert(
                 part="snippet,status",
