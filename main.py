@@ -140,6 +140,19 @@ class YouTubeManager:
             logging.error(f"Error generando miniatura: {str(e)}")
             return None
     
+    def preparar_transmision(self, broadcast_id):
+        try:
+            self.youtube.liveBroadcasts().transition(
+                broadcastStatus="ready",
+                id=broadcast_id,
+                part="id,status"
+            ).execute()
+            logging.info("✅ Transmisión preparada (en estado ready)")
+            return True
+        except Exception as e:
+            logging.error(f"Error preparando transmisión (ready): {str(e)}")
+            return False
+    
     def crear_transmision(self, titulo, video_url):
         try:
             scheduled_start = datetime.utcnow() + timedelta(minutes=15)
@@ -149,7 +162,7 @@ class YouTubeManager:
                 body={
                   "snippet": {
                   "title": titulo,
-                  "description": "Déjate llevar por la serenidad de la naturaleza con nuestro video \"Relax Station\". Los relajantes sonidos de la lluvia te transportarán a un lugar de paz y tranquilidad, ideal para dormir, meditar o concentrarte. Perfecto para desconectar y encontrar tu equilibrio interior. ¡Relájate y disfruta!                                                                                                   IGNORAR TAGS                                                   relax, relajación, lluvia, sonidos de lluvia, calma, dormir, meditar, concentración, sonidos de la naturaleza, ambiente relajante, tranquilidad, lluvia para dormir, lluvia relajante, lluvia y calma, sonidos para relajación, ASMR, sonidos ASMR, lluvia nocturna, estudio, sonidos relajantes, ruido blanco, concentración mental, paz interior, alivio del estrés, lluvia natural, lluvia suave, descanso, ambiente de lluvia, dormir rápido, lluvia profunda, día lluvioso, lluvia para meditar, bienestar, paz, naturaleza, mindfulness, relajación profunda, yoga, pilates, meditación guiada, ondas cerebrales, sonidos curativos, música para estudiar, música para concentración, descanso mental, serenidad, zen, armonía, equilibrio, espiritualidad, relajación total, energía positiva, lluvia tibia, tormenta suave, lluvia con truenos, descanso absoluto, terapia de sonido, bienestar emocional, salud mental, terapia de relajación, descanso nocturno, paz mental, sonidos de la selva, sonidos de bosque, mindfulness y relajación, mejor sueño, descanso profundo, liberación de estrés, antiestrés, antiansiedad, dormir mejor, sueño reparador, relajación sensorial, relajación auditiva, calma mental, música relajante, relajación para ansiedad, terapia de paz, sonido blanco para dormir, relax absoluto, serenidad de la naturaleza, sonidos calmantes, música tranquila para dormir, estado zen, enfoque mental, concentración absoluta, claridad mental, noche lluviosa, sonido de la lluvia, sonido de lluvia para dormir, tranquilidad nocturna, música chill, descanso consciente, relajación instantánea, serenidad para el alma, limpieza mental, vibraciones relajantes, energía relajante, conexión con la naturaleza, descanso espiritual, introspección, desconexión del estrés, flujo de energía positiva, alivio de tensiones, sonidos puros, alivio de fatiga, contemplación, vibraciones positivas, terapia sonora, sonidos calmantes para niños, calma en la tormenta, dormir sin interrupciones, música de fondo tranquila, ambiente natural, relax, relaxation, rain, rain sounds, calm, sleep, meditate, focus, nature sounds, relaxing ambiance, tranquility, rain for sleep, relaxing rain, rain and calm, sounds for relaxation, ASMR, ASMR sounds, nighttime rain, study, relaxing sounds, white noise, mental focus, inner peace, stress relief, natural rain, soft rain, rest, rain ambiance, deep rain, rainy day, rain for meditation, wellness, peace, stress, nature, mindfulness, deep relaxation, yoga, pilates, guided meditation, brain waves, healing sounds, music for studying, music for concentration, mental rest, serenity, zen, harmony, balance, spirituality, total relaxation, positive energy, warm rain, gentle storm, rain with thunder, absolute rest, sound therapy, emotional well-being, mental health, relaxation therapy, nighttime rest, jungle sounds, forest sounds, baby sounds, pet sounds, mindfulness and relaxation, relaxation before sleep, better sleep, deep rest, stress relief, anti-stress, anti-anxiety, sleep better, restorative sleep, sensory relaxation, mental calm, relaxing music, background relaxing rain, relaxing background music, natural sounds, mental harmonization, relaxing noise, natural relaxing sounds, deep relaxation music, relaxed mind, relaxation for anxiety, peace therapy, absolute rest, sound well-being, relaxed concentration, mental balance, white noise for sleeping, absolute relax, calm mind, total serenity, secured rest, rain audio, rain sounds with music, rainy night, nature serenity, calming sounds, quiet music for sleeping, zen state, energetic balance, meditation and focus, mental sharpness, absolute concentration, improved concentration, mental clarity, music and rain, harmony and balance, sound of rain, nighttime tranquility, chill music, mindful rest, instant relaxation, soul serenity, mental cleansing, soft music, relaxing energy, connection with nature, relaxation frequency, brain rest, sound peace, introspection, stress disconnection, positive energy flow, tension relief, mental detox, pure sounds, fatigue relief, full serenity, contemplation, positive vibes, sound therapy, calming sounds for kids, uninterrupted sleep, quiet background music, natural ambiance.", # Descripción acortada por espacio
+                  "description": "Déjate llevar por la serenidad...", # Descripción acortada
                   "scheduledStartTime": scheduled_start.isoformat() + "Z"
                      },
                     "status": {
@@ -157,8 +170,7 @@ class YouTubeManager:
                         "selfDeclaredMadeForKids": False,
                         "enableAutoStart": True,
                         "enableAutoStop": True,
-                        "enableArchive": True,  # Clave para guardar el video
-                        "lifeCycleStatus": "live"
+                        "enableArchive": True
                     }
                 }
             ).execute()
@@ -195,6 +207,9 @@ class YouTubeManager:
                 ).execute()
                 os.remove(thumbnail_path)
             
+            if not self.preparar_transmision(broadcast['id']):
+                raise Exception("No se pudo preparar la transmisión (ready)")
+            
             return {
                 "rtmp": f"{rtmp_url}/{stream_name}",
                 "scheduled_start": scheduled_start,
@@ -203,27 +218,6 @@ class YouTubeManager:
         except Exception as e:
             logging.error(f"Error creando transmisión: {str(e)}")
             return None
-    
-    def iniciar_transmision(self, broadcast_id):
-        max_intentos = 6
-        espera_base = 10
-        
-        for intento in range(max_intentos):
-            try:
-                self.youtube.liveBroadcasts().transition(
-                    broadcastStatus="live",
-                    id=broadcast_id,
-                    part="id,status"
-                ).execute()
-                return True
-            except Exception as e:
-                if intento < max_intentos - 1:
-                    espera = espera_base * (2 ** intento)
-                    logging.warning(f"Intento {intento + 1} fallido. Reintentando en {espera} segundos...")
-                    time.sleep(espera)
-                else:
-                    logging.error(f"Error iniciando transmisión después de {max_intentos} intentos: {str(e)}")
-                    return False
 
 def determinar_categoria(nombre_video):
     nombre = nombre_video.lower()
@@ -281,7 +275,7 @@ def generar_titulo(nombre_video, categoria):
 
 def manejar_transmision(stream_data, youtube):
     try:
-        tiempo_inicio_ffmpeg = stream_data['start_time'] - timedelta(minutes=1)
+        tiempo_inicio_ffmpeg = stream_data['start_time']
         espera_ffmpeg = (tiempo_inicio_ffmpeg - datetime.utcnow()).total_seconds()
         
         if espera_ffmpeg > 0:
@@ -319,14 +313,7 @@ def manejar_transmision(stream_data, youtube):
         ]
         
         proceso = subprocess.Popen(cmd)
-        logging.info("🟢 FFmpeg iniciado - Estableciendo conexión RTMP...")
-        
-        time.sleep(15)
-        
-        if youtube.iniciar_transmision(stream_data['broadcast_id']):
-            logging.info("🎥 Transición a LIVE realizada con éxito")
-        else:
-            raise Exception("No se pudo iniciar la transmisión en YouTube")
+        logging.info("🟢 FFmpeg iniciado - Transmitiendo a YouTube...")
         
         tiempo_inicio = datetime.utcnow()
         while (datetime.utcnow() - tiempo_inicio) < timedelta(hours=8):
@@ -355,20 +342,17 @@ def ciclo_transmision():
                 video = random.choice(gestor.medios['videos'])
                 categoria = determinar_categoria(video['name'])
                 
-                # Filtrar audios por categoría del video (MODIFICACIÓN CLAVE)
                 audios_compatibles = [
                     a for a in gestor.medios['sonidos_naturaleza'] 
                     if a['local_path'] and categoria in a['name'].lower()
                 ]
                 
-                # Si no hay coincidencias, ampliar búsqueda
                 if not audios_compatibles:
                     audios_compatibles = [
                         a for a in gestor.medios['sonidos_naturaleza']
                         if a['local_path'] and categoria in determinar_categoria(a['name'])
                     ]
                 
-                # Si sigue sin haber resultados, usar todos los audios disponibles
                 if not audios_compatibles:
                     audios_compatibles = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
                 
@@ -387,6 +371,7 @@ def ciclo_transmision():
                 🔊 Sonido: {audio.get('name', 'Desconocido')}
                 🏷️ Título: {titulo}
                 ⏰ Inicio: {stream_info['scheduled_start'].strftime('%Y-%m-%d %H:%M:%S UTC')}
+                🟢 Estado: Ready (Previsualización activa)
                 """)
                 
                 current_stream = {
@@ -448,7 +433,6 @@ def ciclo_transmision():
 @app.route('/health')
 def health_check():
     return "OK", 200
-
 
 if __name__ == "__main__":
     logging.info("🎬 Iniciando servicio de streaming...")
