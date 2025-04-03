@@ -354,8 +354,26 @@ def ciclo_transmision():
             if not current_stream:
                 video = random.choice(gestor.medios['videos'])
                 categoria = determinar_categoria(video['name'])
-                audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
-                audio = random.choice(audios)
+                
+                # Filtrar audios por categoría del video (MODIFICACIÓN CLAVE)
+                audios_compatibles = [
+                    a for a in gestor.medios['sonidos_naturaleza'] 
+                    if a['local_path'] and categoria in a['name'].lower()
+                ]
+                
+                # Si no hay coincidencias, ampliar búsqueda
+                if not audios_compatibles:
+                    audios_compatibles = [
+                        a for a in gestor.medios['sonidos_naturaleza']
+                        if a['local_path'] and categoria in determinar_categoria(a['name'])
+                    ]
+                
+                # Si sigue sin haber resultados, usar todos los audios disponibles
+                if not audios_compatibles:
+                    audios_compatibles = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
+                
+                audio = random.choice(audios_compatibles)
+                
                 titulo = generar_titulo(video['name'], categoria)
                 
                 stream_info = youtube.crear_transmision(titulo, video['url'])
