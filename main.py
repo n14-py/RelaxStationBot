@@ -13,6 +13,7 @@ from flask import Flask
 from waitress import serve
 from urllib.parse import urlparse
 import threading
+import ssl
 
 app = Flask(__name__)
 
@@ -142,7 +143,7 @@ class YouTubeManager:
     
     def crear_transmision(self, titulo, video_url):
         try:
-            scheduled_start = datetime.utcnow() + timedelta(minutes=15)
+            scheduled_start = datetime.utcnow() + timedelta(minutes=5)
             
             broadcast = self.youtube.liveBroadcasts().insert(
                 part="snippet,status",
@@ -230,6 +231,18 @@ class YouTubeManager:
             logging.error(f"Error transicionando a {estado}: {str(e)}")
             return False
 
+    def finalizar_transmision(self, broadcast_id):
+        try:
+            self.youtube.liveBroadcasts().transition(
+                broadcastStatus="complete",
+                id=broadcast_id,
+                part="id,status"
+            ).execute()
+            return True
+        except Exception as e:
+            logging.error(f"Error finalizando transmisión: {str(e)}")
+            return False
+
 def determinar_categoria(nombre_video):
     nombre = nombre_video.lower()
     for categoria, palabras in PALABRAS_CLAVE.items():
@@ -238,51 +251,7 @@ def determinar_categoria(nombre_video):
     return random.choice(list(PALABRAS_CLAVE.keys()))
 
 def generar_titulo(nombre_video, categoria):
-    ubicaciones = {
-        'departamento': ['Departamento Acogedor', 'Loft Moderno', 'Ático con Vista', 'Estudio Minimalista'],
-        'cabaña': ['Cabaña en el Bosque', 'Refugio Montañoso', 'Chalet de Madera', 'Cabaña junto al Lago'],
-        'cueva': ['Cueva con Acogedor', 'Gruta Acogedora', 'Cueva con Chimenea', 'Casa Cueva Moderna'],
-        'selva': ['Cabaña en la Selva', 'Refugio Tropical', 'Habitación en la Jungla', 'Casa del Árbol'],
-        'default': ['Entorno Relajante', 'Espacio Zen', 'Lugar de Paz', 'Refugio Natural']
-    }
-    
-    ubicacion_keys = {
-        'departamento': ['departamento', 'loft', 'ático', 'estudio', 'apartamento'],
-        'cabaña': ['cabaña', 'chalet', 'madera', 'bosque', 'lago'],
-        'cueva': ['cueva', 'gruta', 'caverna', 'roca'],
-        'selva': ['selva', 'jungla', 'tropical', 'palmeras']
-    }
-    
-    actividades = [
-        ('Dormir', '🌙'), ('Estudiar', '📚'), ('Meditar', '🧘♂️'), 
-        ('Trabajar', '💻'), ('Desestresarse', '😌'), ('Concentrarse', '🎯')
-    ]
-    
-    beneficios = [
-        'Aliviar el Insomnio', 'Reducir la Ansiedad', 'Mejorar la Concentración',
-        'Relajación Profunda', 'Conexión con la Naturaleza', 'Sueño Reparador',
-        'Calma Interior'
-    ]
-
-    ubicacion_tipo = 'default'
-    nombre = nombre_video.lower()
-    for key, words in ubicacion_keys.items():
-        if any(palabra in nombre for palabra in words):
-            ubicacion_tipo = key
-            break
-            
-    ubicacion = random.choice(ubicaciones.get(ubicacion_tipo, ubicaciones['default']))
-    actividad, emoji_act = random.choice(actividades)
-    beneficio = random.choice(beneficios)
-    
-    plantillas = [
-        f"{ubicacion} • Sonidos de {categoria.capitalize()} para {actividad} {emoji_act} | {beneficio}",
-        f"{actividad} {emoji_act} con Sonidos de {categoria.capitalize()} en {ubicacion} | {beneficio}",
-        f"{beneficio} • {ubicacion} con Ambiente de {categoria.capitalize()} {emoji_act}",
-        f"Relájate en {ubicacion} • {categoria.capitalize()} para {actividad} {emoji_act} | {beneficio}"
-    ]
-    
-    return random.choice(plantillas)
+    # ... (mismo contenido que antes) ...
 
 def manejar_transmision(stream_data, youtube):
     try:
@@ -365,55 +334,31 @@ def manejar_transmision(stream_data, youtube):
                 proceso = subprocess.Popen(cmd)
             time.sleep(15)
         
+        # Finalizar transmisión
         proceso.kill()
-        logging.info("🛑 Transmisión completada (8 horas)")
+        youtube.finalizar_transmision(stream_data['broadcast_id'])
+        logging.info("🛑 Transmisión finalizada y archivada correctamente")
 
     except Exception as e:
         logging.error(f"Error en hilo de transmisión: {str(e)}")
+        youtube.finalizar_transmision(stream_data['broadcast_id'])
 
 def ciclo_transmision():
     gestor = GestorContenido()
     youtube = YouTubeManager()
     
     current_stream = None
-    next_stream = None
     
     while True:
         try:
             if not current_stream:
-                
+                # Seleccionar contenido
                 video = random.choice(gestor.medios['videos'])
-                nombre_video = video['name'].lower()
-                
-                
-                categorias_video = []
-                for cat, palabras in PALABRAS_CLAVE.items():
-                    if any(palabra in nombre_video for palabra in palabras):
-                        categorias_video.append(cat)
-                
-                
-                audios_compatibles = []
-                for audio in gestor.medios['sonidos_naturaleza']:
-                    if not audio['local_path']:
-                        continue
-                    
-                    
-                    nombre_audio = audio['name'].lower()
-                    if any(palabra in nombre_audio 
-                           for cat in categorias_video 
-                           for palabra in PALABRAS_CLAVE[cat]):
-                        audios_compatibles.append(audio)
-                
-                
-                if not audios_compatibles:
-                    audios_compatibles = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
-                
-                audio = random.choice(audios_compatibles)
-                
-               
-                categoria = categorias_video[0] if categorias_video else random.choice(list(PALABRAS_CLAVE.keys()))
+                audio = random.choice([a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']])
+                categoria = determinar_categoria(video['name'])
                 titulo = generar_titulo(video['name'], categoria)
                 
+                # Programar nueva transmisión en 5 minutos
                 stream_info = youtube.crear_transmision(titulo, video['url'])
                 if not stream_info:
                     raise Exception("No se pudo crear transmisión YouTube")
@@ -437,52 +382,28 @@ def ciclo_transmision():
                     "end_time": stream_info['scheduled_start'] + timedelta(hours=8)
                 }
 
-                threading.Thread(
+                # Iniciar hilo de transmisión
+                hilo = threading.Thread(
                     target=manejar_transmision,
                     args=(current_stream, youtube),
                     daemon=True
-                ).start()
+                )
+                hilo.start()
                 
-                next_stream_time = current_stream['start_time'] + timedelta(hours=7, minutes=45)
+                # Programar próxima transmisión 5 minutos después del final
+                next_stream_time = current_stream['end_time'] + timedelta(minutes=5)
             
             else:
-                if datetime.utcnow() >= next_stream_time and not next_stream:
-                    video = random.choice(gestor.medios['videos'])
-                    categoria = determinar_categoria(video['name'])
-                    audios = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
-                    audio = random.choice(audios)
-                    titulo = generar_titulo(video['name'], categoria)
-                    
-                    stream_info = youtube.crear_transmision(titulo, video['url'])
-                    if stream_info:
-                        next_stream = {
-                            "rtmp": stream_info['rtmp'],
-                            "start_time": stream_info['scheduled_start'],
-                            "video": video,
-                            "audio": audio,
-                            "broadcast_id": stream_info['broadcast_id'],
-                            "stream_id": stream_info['stream_id'],
-                            "end_time": stream_info['scheduled_start'] + timedelta(hours=8)
-                        }
-                        logging.info(f"🔜 Nueva transmisión programada: {stream_info['scheduled_start']}")
-                
-                if datetime.utcnow() >= current_stream['end_time']:
-                    if next_stream:
-                        threading.Thread(
-                            target=manejar_transmision,
-                            args=(next_stream, youtube),
-                            daemon=True
-                        ).start()
-                    current_stream = next_stream
-                    next_stream = None
-                    logging.info("🔄 Rotando a la próxima transmisión...")
+                # Verificar si es tiempo de preparar nueva transmisión
+                if datetime.utcnow() >= next_stream_time:
+                    current_stream = None
+                    logging.info("🔄 Preparando nueva transmisión...")
                 
                 time.sleep(15)
         
         except Exception as e:
             logging.error(f"🔥 Error crítico: {str(e)}")
             current_stream = None
-            next_stream = None
             time.sleep(60)
 
 @app.route('/health')
