@@ -13,7 +13,6 @@ from flask import Flask
 from waitress import serve
 from urllib.parse import urlparse
 import threading
-import ssl
 
 app = Flask(__name__)
 
@@ -245,10 +244,28 @@ class YouTubeManager:
 
 def determinar_categoria(nombre_video):
     nombre = nombre_video.lower()
-    for categoria, palabras in PALABRAS_CLAVE.items():
-        if any(palabra in nombre for palabra in palabras):
-            return categoria
-    return random.choice(list(PALABRAS_CLAVE.keys()))
+    contador = {categoria: 0 for categoria in PALABRAS_CLAVE}
+    
+    for palabra in nombre.split():
+        for categoria, palabras in PALABRAS_CLAVE.items():
+            if palabra in palabras:
+                contador[categoria] += 1
+                
+    max_categoria = max(contador, key=contador.get)
+    return max_categoria if contador[max_categoria] > 0 else random.choice(list(PALABRAS_CLAVE.keys()))
+
+def seleccionar_audio_compatible(gestor, categoria_video):
+    audios_compatibles = [
+        audio for audio in gestor.medios['sonidos_naturaleza']
+        if audio['local_path'] and 
+        any(palabra in audio['name'].lower() 
+        for palabra in PALABRAS_CLAVE[categoria_video])
+    ]
+    
+    if not audios_compatibles:
+        audios_compatibles = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
+    
+    return random.choice(audios_compatibles)
 
 def generar_titulo(nombre_video, categoria):
     ubicaciones = {
@@ -339,7 +356,6 @@ def manejar_transmision(stream_data, youtube):
         proceso = subprocess.Popen(cmd)
         logging.info("🟢 FFmpeg iniciado - Estableciendo conexión RTMP...")
         
-        # Verificar estado del stream
         max_checks = 10
         stream_activo = False
         for _ in range(max_checks):
@@ -357,19 +373,16 @@ def manejar_transmision(stream_data, youtube):
             proceso.kill()
             return
         
-        # Esperar hasta el inicio programado
         tiempo_restante = (stream_data['start_time'] - datetime.utcnow()).total_seconds()
         if tiempo_restante > 0:
             logging.info(f"⏳ Esperando {tiempo_restante:.0f}s para LIVE...")
             time.sleep(tiempo_restante)
         
-        # Iniciar transmisión en vivo
         if youtube.transicionar_estado(stream_data['broadcast_id'], 'live'):
             logging.info("🎥 Transmisión LIVE iniciada")
         else:
             raise Exception("No se pudo iniciar la transmisión")
         
-        # Mantener transmisión por 8 horas
         tiempo_inicio = datetime.utcnow()
         while (datetime.utcnow() - tiempo_inicio) < timedelta(hours=8):
             if proceso.poll() is not None:
@@ -378,7 +391,6 @@ def manejar_transmision(stream_data, youtube):
                 proceso = subprocess.Popen(cmd)
             time.sleep(15)
         
-        # Finalizar transmisión
         proceso.kill()
         youtube.finalizar_transmision(stream_data['broadcast_id'])
         logging.info("🛑 Transmisión finalizada y archivada correctamente")
@@ -390,31 +402,26 @@ def manejar_transmision(stream_data, youtube):
 def ciclo_transmision():
     gestor = GestorContenido()
     youtube = YouTubeManager()
-    
     current_stream = None
     
     while True:
         try:
             if not current_stream:
-                # Seleccionar contenido
                 video = random.choice(gestor.medios['videos'])
-                audio = random.choice([a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']])
-                categoria = determinar_categoria(video['name'])
-                titulo = generar_titulo(video['name'], categoria)
+                logging.info(f"🎥 Video seleccionado: {video['name']}")
                 
-                # Programar nueva transmisión en 5 minutos
+                categoria = determinar_categoria(video['name'])
+                logging.info(f"🏷️ Categoría detectada: {categoria}")
+                
+                audio = seleccionar_audio_compatible(gestor, categoria)
+                logging.info(f"🔊 Audio seleccionado: {audio['name']}")
+                
+                titulo = generar_titulo(video['name'], categoria)
+                logging.info(f"📝 Título generado: {titulo}")
+                
                 stream_info = youtube.crear_transmision(titulo, video['url'])
                 if not stream_info:
-                    raise Exception("No se pudo crear transmisión YouTube")
-                
-                logging.info(f"""
-                🚀 NUEVA TRANSMISIÓN PROGRAMADA 🚀
-                📍 Ubicación: {video.get('name', 'Desconocido')}
-                🌳 Categoría: {categoria}
-                🔊 Sonido: {audio.get('name', 'Desconocido')}
-                🏷️ Título: {titulo}
-                ⏰ Inicio: {stream_info['scheduled_start'].strftime('%Y-%m-%d %H:%M:%S UTC')}
-                """)
+                    raise Exception("Error creación transmisión")
                 
                 current_stream = {
                     "rtmp": stream_info['rtmp'],
@@ -426,19 +433,15 @@ def ciclo_transmision():
                     "end_time": stream_info['scheduled_start'] + timedelta(hours=8)
                 }
 
-                # Iniciar hilo de transmisión
-                hilo = threading.Thread(
+                threading.Thread(
                     target=manejar_transmision,
                     args=(current_stream, youtube),
                     daemon=True
-                )
-                hilo.start()
+                ).start()
                 
-                # Programar próxima transmisión 5 minutos después del final
                 next_stream_time = current_stream['end_time'] + timedelta(minutes=5)
             
             else:
-                # Verificar si es tiempo de preparar nueva transmisión
                 if datetime.utcnow() >= next_stream_time:
                     current_stream = None
                     logging.info("🔄 Preparando nueva transmisión...")
