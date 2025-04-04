@@ -293,44 +293,44 @@ def manejar_transmision(stream_data, youtube):
             logging.info(f"⏳ Esperando {espera_ffmpeg:.0f} segundos para iniciar FFmpeg...")
             time.sleep(espera_ffmpeg)
         
-       cmd = [
-    "ffmpeg",
-    "-loglevel", "error",
-    "-rtbufsize", "200M",  # Buffer de entrada aumentado
-    "-re",
-    "-stream_loop", "-1",
-    "-i", stream_data['video']['url'],
-    "-stream_loop", "-1",
-    "-i", stream_data['audio']['local_path'],
-    "-map", "0:v:0",
-    "-map", "1:a:0",
+        cmd = [
+            "ffmpeg",
+            "-loglevel", "error",
+            "-rtbufsize", "200M",  
+            "-re",
+            "-stream_loop", "-1",
+            "-i", stream_data['video']['url'],
+            "-stream_loop", "-1",
+            "-i", stream_data['audio']['local_path'],
+            "-map", "0:v:0",
+            "-map", "1:a:0",
     
-    # Video
-    "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:-1:-1:color=black,setsar=1",
-    "-c:v", "libx264",
-    "-preset", "veryfast",  # Balance entre velocidad y calidad
-    "-tune", "zerolatency",
-    "-profile:v", "high",  # Perfil de codificación mejorado
-    "-x264-params", "keyint=48:min-keyint=48:scenecut=0",
-    "-b:v", "4500k",  # Bitrate aumentado
-    "-maxrate", "5000k",  # Máximo bitrate variable
-    "-bufsize", "9000k",  # Buffer aumentado (2x maxrate)
-    "-r", "30",  # Frame rate aumentado
-    "-g", "60",  # Grupo de imágenes cada 2 segundos (30fps * 2)
-    "-crf", "23",  # Calidad constante
+   
+            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:-1:-1:color=black,setsar=1",
+            "-c:v", "libx264",
+            "-preset", "veryfast",  
+             "-tune", "zerolatency",
+            "-profile:v", "high",  
+            "-x264-params", "keyint=48:min-keyint=48:scenecut=0",
+            "-b:v", "4500k",  
+            "-maxrate", "5000k",  
+            "-bufsize", "9000k", 
+            "-r", "30",  
+            "-g", "60",  
+            "-crf", "23",  
     
-    # Audio
-    "-c:a", "aac",
-    "-b:a", "128k",  # Mejor calidad de audio
-    "-ar", "48000",  # Muestreo de audio aumentado
+
+            "-c:a", "aac",
+            "-b:a", "128k",  
+            "-ar", "48000", 
     
-    # Streaming
-    "-f", "flv",
-    "-flush_packets", "0",
-    "-threads", "2",  # Más hilos para procesamiento
-    "-movflags", "+faststart",
-    stream_data['rtmp']
-]
+           
+            "-f", "flv",
+            "-flush_packets", "0",
+            "-threads", "2",  
+            "-movflags", "+faststart",
+            stream_data['rtmp']
+        ]
         
         proceso = subprocess.Popen(cmd)
         logging.info("🟢 FFmpeg iniciado - Estableciendo conexión RTMP...")
