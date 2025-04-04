@@ -142,7 +142,7 @@ class YouTubeManager:
     
     def crear_transmision(self, titulo, video_url):
         try:
-            scheduled_start = datetime.utcnow() + timedelta(minutes=1)
+            scheduled_start = datetime.utcnow() + timedelta(minutes=15)
             
             broadcast = self.youtube.liveBroadcasts().insert(
                 part="snippet,status",
@@ -296,7 +296,7 @@ def manejar_transmision(stream_data, youtube):
         cmd = [
             "ffmpeg",
             "-loglevel", "error",
-            "-rtbufsize", "500M",  
+            "-rtbufsize", "100M",
             "-re",
             "-stream_loop", "-1",
             "-i", stream_data['video']['url'],
@@ -304,31 +304,22 @@ def manejar_transmision(stream_data, youtube):
             "-i", stream_data['audio']['local_path'],
             "-map", "0:v:0",
             "-map", "1:a:0",
-    
-   
-            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:-1:-1:color=black,setsar=1",
+            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:-1:-1,setsar=1",
             "-c:v", "libx264",
-            "-preset", "veryfast",  
-             "-tune", "zerolatency",
-            "-profile:v", "high",  
-            "-x264-params", "keyint=48:min-keyint=48:scenecut=0",
-            "-b:v", "4500k",  
-            "-maxrate", "5000k",  
-            "-bufsize", "8000k * 60 = 480000k", 
-            "-r", "30",  
-            "-g", "60",  
-            "-crf", "23",  
-    
-
+            "-preset", "ultrafast",
+            "-tune", "zerolatency",
+            "-x264-params", "keyint=48:min-keyint=48",
+            "-b:v", "3000k",
+            "-maxrate", "3000k",
+            "-bufsize", "6000k",
+            "-r", "24",
+            "-g", "48",
+            "-threads", "1",
+            "-flush_packets", "1",
             "-c:a", "aac",
-            "-b:a", "128k",  
-            "-ar", "48000", 
-    
-           
+            "-b:a", "96k",
+            "-ar", "44100",
             "-f", "flv",
-            "-flush_packets", "0",
-            "-threads", "2",  
-            "-movflags", "+faststart",
             stream_data['rtmp']
         ]
         
