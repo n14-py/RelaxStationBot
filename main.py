@@ -142,7 +142,7 @@ class YouTubeManager:
     
     def crear_transmision(self, titulo, video_url):
         try:
-            scheduled_start = datetime.utcnow() + timedelta(minutes=15)
+            scheduled_start = datetime.utcnow() + timedelta(minutes=1)
             
             broadcast = self.youtube.liveBroadcasts().insert(
                 part="snippet,status",
@@ -296,7 +296,7 @@ def manejar_transmision(stream_data, youtube):
         cmd = [
             "ffmpeg",
             "-loglevel", "error",
-            "-rtbufsize", "200M",  
+            "-rtbufsize", "500M",  
             "-re",
             "-stream_loop", "-1",
             "-i", stream_data['video']['url'],
@@ -314,7 +314,7 @@ def manejar_transmision(stream_data, youtube):
             "-x264-params", "keyint=48:min-keyint=48:scenecut=0",
             "-b:v", "4500k",  
             "-maxrate", "5000k",  
-            "-bufsize", "9000k", 
+            "-bufsize", "8000k * 60 = 480000k", 
             "-r", "30",  
             "-g", "60",  
             "-crf", "23",  
