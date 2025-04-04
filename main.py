@@ -195,6 +195,14 @@ class YouTubeManager:
                 ).execute()
                 os.remove(thumbnail_path)
             
+            # Transición a estado TESTING (vista previa)
+            self.youtube.liveBroadcasts().transition(
+                broadcastStatus="testing",
+                id=broadcast['id'],
+                part="id,status"
+            ).execute()
+            logging.info(f"🎬 Transmisión {broadcast['id']} en VISTA PREVIA (testing)")
+            
             return {
                 "rtmp": f"{rtmp_url}/{stream_name}",
                 "scheduled_start": scheduled_start,
