@@ -8,28 +8,7 @@ RUN echo "deb http://deb.debian.org/debian bullseye main contrib non-free" > /et
     apt-get update -o Acquire::Check-Valid-Until=false && \
     apt-get install -y --no-install-recommends \
     ffmpeg \
-    FROM python:3.9-slim
-
-RUN apt-get update && \
-    apt-get install -y \
-    ffmpeg \
     wget \
-    libx264-dev \
-    libx265-dev \
-    libvpx-dev \
-    libmp3lame-dev \
-    libopus-dev \
-    libass-dev \
-    libwebp-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV PYTHONUNBUFFERED=1
-ENV TZ=America/Mexico_City
-
-COPY . /app
-WORKDIR /app
-
-RUN pip install --no-cache-dir -r requirements.txt
     libsm6 \
     libxext6 \
     libgl1 \
