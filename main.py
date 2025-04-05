@@ -14,6 +14,7 @@ from flask import Flask
 from waitress import serve
 from urllib.parse import urlparse
 import threading
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 app = Flask(__name__)
 
@@ -47,18 +48,68 @@ class GestorContenido:
         self.medios = self.cargar_medios()
     
     def obtener_extension_segura(self, url):
+        extensiones_validas = {'.mp4', '.mov', '.avi', '.mkv', '.webm'}
         try:
             parsed = urlparse(url)
-            return os.path.splitext(parsed.path)[1].lower() or '.mp4'
+            ext = os.path.splitext(parsed.path)[1].lower()
+            return ext if ext in extensiones_validas else '.mp4'
         except:
             return '.mp4'
 
-    def descargar_audio(self, url):
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    def descargar_video(self, url):
         try:
-            if "drive.google.com" in url:
+            if "drive.google.com" in url and "export=download" in url:
                 file_id = url.split('id=')[-1].split('&')[0]
                 url = f"https://drive.google.com/uc?export=download&id={file_id}&confirm=t"
             
+            nombre_hash = hashlib.md5(url.encode()).hexdigest()
+            ruta_local = os.path.join(self.media_cache_dir, f"{nombre_hash}.mp4")
+            
+            if os.path.exists(ruta_local):
+                return ruta_local
+                
+            logging.info(f"⬇️ Descargando video: {url}")
+            
+            subprocess.run([
+                "wget",
+                "--no-check-certificate",
+                "--progress=dot:giga",
+                "--retry-connrefused",
+                "--waitretry=1",
+                "--read-timeout=20",
+                "--timeout=15",
+                "-t", "3",
+                "-O", ruta_local,
+                url
+            ], check=True, timeout=300)
+
+            self.verificar_video(ruta_local)
+            return ruta_local
+        except Exception as e:
+            logging.error(f"Error descarga video: {str(e)}")
+            if os.path.exists(ruta_local):
+                os.remove(ruta_local)
+            raise
+
+    def verificar_video(self, path):
+        try:
+            result = subprocess.run([
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                path
+            ], capture_output=True, text=True, timeout=30)
+            
+            if not result.stdout.strip() or float(result.stdout) < 10:
+                raise ValueError("Video inválido o demasiado corto")
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Timeout verificando video")
+
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    def descargar_audio(self, url):
+        try:
             nombre_hash = hashlib.md5(url.encode()).hexdigest()
             ruta_local = os.path.join(self.media_cache_dir, f"{nombre_hash}.wav")
             
@@ -78,38 +129,15 @@ class GestorContenido:
                 "ffmpeg", "-y", "-i", temp_path,
                 "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
                 ruta_local
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             
             os.remove(temp_path)
             return ruta_local
         except Exception as e:
             logging.error(f"Error procesando audio: {str(e)}")
-            return None
-
-    def descargar_video(self, url):
-        try:
-            if "drive.google.com" in url:
-                file_id = url.split('id=')[-1].split('&')[0]
-                url = f"https://drive.google.com/uc?export=download&id={file_id}&confirm=t"
-            
-            nombre_hash = hashlib.md5(url.encode()).hexdigest()
-            extension = self.obtener_extension_segura(url)
-            ruta_local = os.path.join(self.media_cache_dir, f"{nombre_hash}{extension}")
-            
-            if os.path.exists(ruta_local):
-                return ruta_local
-                
-            with requests.get(url, stream=True, timeout=30) as r:
-                r.raise_for_status()
-                with open(ruta_local, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-            
-            return ruta_local
-        except Exception as e:
-            logging.error(f"Error descargando video: {str(e)}")
-            return None
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            raise
 
     def cargar_medios(self):
         try:
@@ -123,10 +151,14 @@ class GestorContenido:
             # Descargar videos
             for medio in datos['videos']:
                 medio['local_path'] = self.descargar_video(medio['url'])
+                if not medio['local_path']:
+                    raise RuntimeError(f"Fallo descarga video: {medio['name']}")
             
             # Descargar sonidos
             for medio in datos['sonidos_naturaleza']:
                 medio['local_path'] = self.descargar_audio(medio['url'])
+                if not medio['local_path']:
+                    raise RuntimeError(f"Fallo descarga audio: {medio['name']}")
             
             logging.info("✅ Medios verificados y listos")
             return datos
@@ -157,6 +189,7 @@ class YouTubeManager:
     def generar_miniatura(self, video_path):
         try:
             output_path = "/tmp/miniatura_nueva.jpg"
+            
             subprocess.run([
                 "ffmpeg",
                 "-y", "-ss", "00:00:10",
@@ -165,11 +198,12 @@ class YouTubeManager:
                 "-q:v", "2",
                 "-vf", "scale=1280:720,setsar=1",
                 output_path
-            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ], check=True, timeout=30)
+            
             return output_path
         except Exception as e:
             logging.error(f"Error generando miniatura: {str(e)}")
-            return None
+            return "default_thumbnail.jpg"
     
     def crear_transmision(self, titulo, video_path):
         try:
@@ -180,7 +214,7 @@ class YouTubeManager:
                 body={
                   "snippet": {
                   "title": titulo,
-                  "description": "Déjate llevar por la serenidad de la naturaleza...",  # Descripción abreviada
+                  "description": "Déjate llevar por la serenidad de la naturaleza...",
                   "scheduledStartTime": scheduled_start.isoformat() + "Z"
                      },
                     "status": {
@@ -224,7 +258,8 @@ class YouTubeManager:
                     videoId=broadcast['id'],
                     media_body=thumbnail_path
                 ).execute()
-                os.remove(thumbnail_path)
+                if thumbnail_path != "default_thumbnail.jpg":
+                    os.remove(thumbnail_path)
             
             return {
                 "rtmp": f"{rtmp_url}/{stream_name}",
@@ -457,7 +492,7 @@ def ciclo_transmision():
                 audio = seleccionar_audio_compatible(gestor, categoria)
                 if not audio.get('local_path'):
                     raise Exception("Audio no descargado correctamente")
-                logging.info(f"🔊 Audio seleccionado: {audio['name']}")
+                logging.info(f"🔊 Audio seleccionado: {audio['name']")
                 
                 titulo = generar_titulo(video['name'], categoria)
                 logging.info(f"📝 Título generado: {titulo}")
