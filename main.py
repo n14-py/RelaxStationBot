@@ -1,3 +1,4 @@
+
 import os
 import random
 import subprocess
@@ -231,7 +232,114 @@ class YouTubeManager:
             logging.error(f"Error creando transmisión: {str(e)}")
             return None
     
-    # Resto de métodos de YouTubeManager sin cambios...
+    def obtener_estado_stream(self, stream_id):
+        try:
+            response = self.youtube.liveStreams().list(
+                part="status",
+                id=stream_id
+            ).execute()
+            if response.get('items'):
+                return response['items'][0]['status']['streamStatus']
+            return None
+        except Exception as e:
+            logging.error(f"Error obteniendo estado del stream: {str(e)}")
+            return None
+    
+    def transicionar_estado(self, broadcast_id, estado):
+        try:
+            self.youtube.liveBroadcasts().transition(
+                broadcastStatus=estado,
+                id=broadcast_id,
+                part="id,status"
+            ).execute()
+            return True
+        except Exception as e:
+            logging.error(f"Error transicionando a {estado}: {str(e)}")
+            return False
+
+    def finalizar_transmision(self, broadcast_id):
+        try:
+            self.youtube.liveBroadcasts().transition(
+                broadcastStatus="complete",
+                id=broadcast_id,
+                part="id,status"
+            ).execute()
+            return True
+        except Exception as e:
+            logging.error(f"Error finalizando transmisión: {str(e)}")
+            return False
+
+def determinar_categoria(nombre_video):
+    nombre = nombre_video.lower()
+    contador = {categoria: 0 for categoria in PALABRAS_CLAVE}
+    
+    for palabra in nombre.split():
+        for categoria, palabras in PALABRAS_CLAVE.items():
+            if palabra in palabras:
+                contador[categoria] += 1
+                
+    max_categoria = max(contador, key=contador.get)
+    return max_categoria if contador[max_categoria] > 0 else random.choice(list(PALABRAS_CLAVE.keys()))
+
+def seleccionar_audio_compatible(gestor, categoria_video):
+    audios_compatibles = [
+        audio for audio in gestor.medios['sonidos_naturaleza']
+        if audio['local_path'] and 
+        any(palabra in audio['name'].lower() 
+        for palabra in PALABRAS_CLAVE[categoria_video])
+    ]
+    
+    if not audios_compatibles:
+        audios_compatibles = [a for a in gestor.medios['sonidos_naturaleza'] if a['local_path']]
+    
+    return random.choice(audios_compatibles)
+
+def generar_titulo(nombre_video, categoria):
+    ubicaciones = {
+        'departamento': ['Departamento Acogedor', 'Loft Moderno', 'Ático con Vista', 'Estudio Minimalista'],
+        'cabaña': ['Cabaña en el Bosque', 'Refugio Montañoso', 'Chalet de Madera', 'Cabaña junto al Lago'],
+        'cueva': ['Cueva Acogedor', 'Gruta Acogedora', 'Cueva con Chimenea', 'Casa Cueva Moderna'],
+        'selva': ['Cabaña en la Selva', 'Refugio Tropical', 'Habitación en la Jungla', 'Casa del Árbol'],
+        'default': ['Entorno Relajante', 'Espacio Zen', 'Lugar de Paz', 'Refugio Natural']
+    }
+    
+    ubicacion_keys = {
+        'departamento': ['departamento', 'loft', 'ático', 'estudio', 'apartamento'],
+        'cabaña': ['cabaña', 'chalet', 'madera', 'bosque', 'lago'],
+        'cueva': ['cueva', 'gruta', 'caverna', 'roca'],
+        'selva': ['selva', 'jungla', 'tropical', 'palmeras']
+    }
+    
+    actividades = [
+        ('Dormir', '🌙'), ('Estudiar', '📚'), ('Meditar', '🧘♂️'), 
+        ('Trabajar', '💻'), ('Desestresarse', '😌'), ('Concentrarse', '🎯')
+    ]
+    
+    beneficios = [
+        'Aliviar el Insomnio', 'Reducir la Ansiedad', 'Mejorar la Concentración',
+        'Relajación Profunda', 'Conexión con la Naturaleza', 'Sueño Reparador',
+        'Calma Interior'
+    ]
+
+    ubicacion_tipo = 'default'
+    nombre = nombre_video.lower()
+    for key, words in ubicacion_keys.items():
+        if any(palabra in nombre for palabra in words):
+            ubicacion_tipo = key
+            break
+            
+    ubicacion = random.choice(ubicaciones.get(ubicacion_tipo, ubicaciones['default']))
+    actividad, emoji_act = random.choice(actividades)
+    beneficio = random.choice(beneficios)
+    
+    plantillas = [
+        f"{ubicacion} • Sonidos de {categoria.capitalize()} para {actividad} {emoji_act} | {beneficio}",
+        f"{actividad} {emoji_act} con Sonidos de {categoria.capitalize()} en {ubicacion} | {beneficio}",
+        f"{beneficio} • {ubicacion} con Ambiente de {categoria.capitalize()} {emoji_act}",
+        f"Relájate en {ubicacion} • {categoria.capitalize()} para {actividad} {emoji_act} | {beneficio}"
+    ]
+    
+    return random.choice(plantillas)
 
 def manejar_transmision(stream_data, youtube, gestor):
     try:
