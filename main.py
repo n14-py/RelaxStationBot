@@ -5,6 +5,7 @@ import logging
 import time
 import requests
 import hashlib
+import shutil
 from datetime import datetime, timedelta
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
@@ -48,9 +49,9 @@ class GestorContenido:
     def obtener_extension_segura(self, url):
         try:
             parsed = urlparse(url)
-            return os.path.splitext(parsed.path)[1].lower() or '.mp3'
+            return os.path.splitext(parsed.path)[1].lower() or '.mp4'
         except:
-            return '.mp3'
+            return '.mp4'
 
     def descargar_audio(self, url):
         try:
@@ -85,6 +86,31 @@ class GestorContenido:
             logging.error(f"Error procesando audio: {str(e)}")
             return None
 
+    def descargar_video(self, url):
+        try:
+            if "drive.google.com" in url:
+                file_id = url.split('id=')[-1].split('&')[0]
+                url = f"https://drive.google.com/uc?export=download&id={file_id}&confirm=t"
+            
+            nombre_hash = hashlib.md5(url.encode()).hexdigest()
+            extension = self.obtener_extension_segura(url)
+            ruta_local = os.path.join(self.media_cache_dir, f"{nombre_hash}{extension}")
+            
+            if os.path.exists(ruta_local):
+                return ruta_local
+                
+            with requests.get(url, stream=True, timeout=30) as r:
+                r.raise_for_status()
+                with open(ruta_local, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+            
+            return ruta_local
+        except Exception as e:
+            logging.error(f"Error descargando video: {str(e)}")
+            return None
+
     def cargar_medios(self):
         try:
             respuesta = requests.get(MEDIOS_URL, timeout=20)
@@ -94,6 +120,11 @@ class GestorContenido:
             if not all(key in datos for key in ["videos", "musica", "sonidos_naturaleza"]):
                 raise ValueError("Estructura JSON inválida")
             
+            # Descargar videos
+            for medio in datos['videos']:
+                medio['local_path'] = self.descargar_video(medio['url'])
+            
+            # Descargar sonidos
             for medio in datos['sonidos_naturaleza']:
                 medio['local_path'] = self.descargar_audio(medio['url'])
             
@@ -123,13 +154,13 @@ class YouTubeManager:
             logging.error(f"Error autenticación YouTube: {str(e)}")
             return None
     
-    def generar_miniatura(self, video_url):
+    def generar_miniatura(self, video_path):
         try:
             output_path = "/tmp/miniatura_nueva.jpg"
             subprocess.run([
                 "ffmpeg",
                 "-y", "-ss", "00:00:10",
-                "-i", video_url,
+                "-i", video_path,
                 "-vframes", "1",
                 "-q:v", "2",
                 "-vf", "scale=1280:720,setsar=1",
@@ -140,7 +171,7 @@ class YouTubeManager:
             logging.error(f"Error generando miniatura: {str(e)}")
             return None
     
-    def crear_transmision(self, titulo, video_url):
+    def crear_transmision(self, titulo, video_path):
         try:
             scheduled_start = datetime.utcnow() + timedelta(minutes=5)
             
@@ -149,7 +180,7 @@ class YouTubeManager:
                 body={
                   "snippet": {
                   "title": titulo,
-                  "description": "Déjate llevar por la serenidad de la naturaleza con nuestro video \"Relax Station\". Los relajantes sonidos de la lluvia te transportarán a un lugar de paz y tranquilidad, ideal para dormir, meditar o concentrarte. Perfecto para desconectar y encontrar tu equilibrio interior. ¡Relájate y disfruta!                                                                                                   IGNORAR TAGS                                                   relax, relajación, lluvia, sonidos de lluvia, calma, dormir, meditar, concentración, sonidos de la naturaleza, ambiente relajante, tranquilidad, lluvia para dormir, lluvia relajante, lluvia y calma, sonidos para relajación, ASMR, sonidos ASMR, lluvia nocturna, estudio, sonidos relajantes, ruido blanco, concentración mental, paz interior, alivio del estrés, lluvia natural, lluvia suave, descanso, ambiente de lluvia, dormir rápido, lluvia profunda, día lluvioso, lluvia para meditar, bienestar, paz, naturaleza, mindfulness, relajación profunda, yoga, pilates, meditación guiada, ondas cerebrales, sonidos curativos, música para estudiar, música para concentración, descanso mental, serenidad, zen, armonía, equilibrio, espiritualidad, relajación total, energía positiva, lluvia tibia, tormenta suave, lluvia con truenos, descanso absoluto, terapia de sonido, bienestar emocional, salud mental, terapia de relajación, descanso nocturno, paz mental, sonidos de la selva, sonidos de bosque, mindfulness y relajación, mejor sueño, descanso profundo, liberación de estrés, antiestrés, antiansiedad, dormir mejor, sueño reparador, relajación sensorial, relajación auditiva, calma mental, música relajante, relajación para ansiedad, terapia de paz, sonido blanco para dormir, relax absoluto, serenidad de la naturaleza, sonidos calmantes, música tranquila para dormir, estado zen, enfoque mental, concentración absoluta, claridad mental, noche lluviosa, sonido de la lluvia, sonido de lluvia para dormir, tranquilidad nocturna, música chill, descanso consciente, relajación instantánea, serenidad para el alma, limpieza mental, vibraciones relajantes, energía relajante, conexión con la naturaleza, descanso espiritual, introspección, desconexión del estrés, flujo de energía positiva, alivio de tensiones, sonidos puros, alivio de fatiga, contemplación, vibraciones positivas, terapia sonora, sonidos calmantes para niños, calma en la tormenta, dormir sin interrupciones, música de fondo tranquila, ambiente natural, relax, relaxation, rain, rain sounds, calm, sleep, meditate, focus, nature sounds, relaxing ambiance, tranquility, rain for sleep, relaxing rain, rain and calm, sounds for relaxation, ASMR, ASMR sounds, nighttime rain, study, relaxing sounds, white noise, mental focus, inner peace, stress relief, natural rain, soft rain, rest, rain ambiance, deep rain, rainy day, rain for meditation, wellness, peace, stress, nature, mindfulness, deep relaxation, yoga, pilates, guided meditation, brain waves, healing sounds, music for studying, music for concentration, mental rest, serenity, zen, harmony, balance, spirituality, total relaxation, positive energy, warm rain, gentle storm, rain with thunder, absolute rest, sound therapy, emotional well-being, mental health, relaxation therapy, nighttime rest, jungle sounds, forest sounds, baby sounds, pet sounds, mindfulness and relaxation, relaxation before sleep, better sleep, deep rest, stress relief, anti-stress, anti-anxiety, sleep better, restorative sleep, sensory relaxation, mental calm, relaxing music, background relaxing rain, relaxing background music, natural sounds, mental harmonization, relaxing noise, natural relaxing sounds, deep relaxation music, relaxed mind, relaxation for anxiety, peace therapy, absolute rest, sound well-being, relaxed concentration, mental balance, white noise for sleeping, absolute relax, calm mind, total serenity, secured rest, rain audio, rain sounds with music, rainy night, nature serenity, calming sounds, quiet music for sleeping, zen state, energetic balance, meditation and focus, mental sharpness, absolute concentration, improved concentration, mental clarity, music and rain, harmony and balance, sound of rain, nighttime tranquility, chill music, mindful rest, instant relaxation, soul serenity, mental cleansing, soft music, relaxing energy, connection with nature, relaxation frequency, brain rest, sound peace, introspection, stress disconnection, positive energy flow, tension relief, mental detox, pure sounds, fatigue relief, full serenity, contemplation, positive vibes, sound therapy, calming sounds for kids, uninterrupted sleep, quiet background music, natural ambiance..",
+                  "description": "Déjate llevar por la serenidad de la naturaleza...",  # Descripción abreviada
                   "scheduledStartTime": scheduled_start.isoformat() + "Z"
                      },
                     "status": {
@@ -187,7 +218,7 @@ class YouTubeManager:
             rtmp_url = stream['cdn']['ingestionInfo']['ingestionAddress']
             stream_name = stream['cdn']['ingestionInfo']['streamName']
             
-            thumbnail_path = self.generar_miniatura(video_url)
+            thumbnail_path = self.generar_miniatura(video_path)
             if thumbnail_path and os.path.exists(thumbnail_path):
                 self.youtube.thumbnails().set(
                     videoId=broadcast['id'],
@@ -271,7 +302,7 @@ def generar_titulo(nombre_video, categoria):
     ubicaciones = {
         'departamento': ['Departamento Acogedor', 'Loft Moderno', 'Ático con Vista', 'Estudio Minimalista'],
         'cabaña': ['Cabaña en el Bosque', 'Refugio Montañoso', 'Chalet de Madera', 'Cabaña junto al Lago'],
-        'cueva': ['Cueva Acogedor', 'Gruta Acogedora', 'Cueva con Chimenea', 'Casa Cueva Moderna'],
+        'cueva': ['Cueva Acogedora', 'Gruta Acogedora', 'Cueva con Chimenea', 'Casa Cueva Moderna'],
         'selva': ['Cabaña en la Selva', 'Refugio Tropical', 'Habitación en la Jungla', 'Casa del Árbol'],
         'default': ['Entorno Relajante', 'Espacio Zen', 'Lugar de Paz', 'Refugio Natural']
     }
@@ -329,7 +360,7 @@ def manejar_transmision(stream_data, youtube):
             "-rtbufsize", "100M",
             "-re",
             "-stream_loop", "-1",
-            "-i", stream_data['video']['url'],
+            "-i", stream_data['video']['local_path'],
             "-stream_loop", "-1",
             "-i", stream_data['audio']['local_path'],
             "-map", "0:v:0",
@@ -398,28 +429,40 @@ def manejar_transmision(stream_data, youtube):
     except Exception as e:
         logging.error(f"Error en hilo de transmisión: {str(e)}")
         youtube.finalizar_transmision(stream_data['broadcast_id'])
+    
+    finally:
+        logging.info("🧹 Limpiando caché de medios...")
+        media_cache_dir = os.path.abspath("./media_cache")
+        if os.path.exists(media_cache_dir):
+            shutil.rmtree(media_cache_dir, ignore_errors=True)
+        os.makedirs(media_cache_dir, exist_ok=True)
 
 def ciclo_transmision():
-    gestor = GestorContenido()
     youtube = YouTubeManager()
     current_stream = None
     
     while True:
         try:
             if not current_stream:
+                gestor = GestorContenido()
                 video = random.choice(gestor.medios['videos'])
+                if not video.get('local_path'):
+                    raise Exception("Video no descargado correctamente")
+                
                 logging.info(f"🎥 Video seleccionado: {video['name']}")
                 
                 categoria = determinar_categoria(video['name'])
                 logging.info(f"🏷️ Categoría detectada: {categoria}")
                 
                 audio = seleccionar_audio_compatible(gestor, categoria)
+                if not audio.get('local_path'):
+                    raise Exception("Audio no descargado correctamente")
                 logging.info(f"🔊 Audio seleccionado: {audio['name']}")
                 
                 titulo = generar_titulo(video['name'], categoria)
                 logging.info(f"📝 Título generado: {titulo}")
                 
-                stream_info = youtube.crear_transmision(titulo, video['url'])
+                stream_info = youtube.crear_transmision(titulo, video['local_path'])
                 if not stream_info:
                     raise Exception("Error creación transmisión")
                 
