@@ -492,7 +492,7 @@ def ciclo_transmision():
                 audio = seleccionar_audio_compatible(gestor, categoria)
                 if not audio.get('local_path'):
                     raise Exception("Audio no descargado correctamente")
-                logging.info(f"🔊 Audio seleccionado: {audio['name']")
+                logging.info(f"🔊 Audio seleccionado: {audio['name']}")
                 
                 titulo = generar_titulo(video['name'], categoria)
                 logging.info(f"📝 Título generado: {titulo}")
